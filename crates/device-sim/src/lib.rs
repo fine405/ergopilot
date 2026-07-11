@@ -76,17 +76,31 @@ impl DeviceAdapter for SqliteSimulator {
             .map_err(|error| DeviceError::new(error.to_string()))
     }
 
-    fn apply(&mut self, action: &DeviceAction) -> Result<DeviceExecution, DeviceError> {
-        self.connection
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        let updated = self
+            .connection
             .execute(
                 "UPDATE simulator_state
                  SET desk_height_mm = ?1,
                      state_version = state_version + 1,
                      movement_count = movement_count + 1
-                 WHERE singleton = 1",
-                params![action.target_height_mm()],
+                 WHERE singleton = 1 AND state_version = ?2",
+                params![action.target_height_mm(), expected_state_version],
             )
             .map_err(|error| DeviceError::new(error.to_string()))?;
+        if updated == 0 {
+            let actual = self
+                .read_snapshot(0)
+                .map_err(|error| DeviceError::new(error.to_string()))?
+                .state_version;
+            return Err(DeviceError::new(format!(
+                "expected state version {expected_state_version}, but actuator is at {actual}"
+            )));
+        }
 
         let fault = std::mem::take(&mut self.next_fault);
         Ok(match fault {

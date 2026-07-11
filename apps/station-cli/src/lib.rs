@@ -11,6 +11,8 @@ use std::{
 };
 use thiserror::Error;
 
+const DEMO_MARKER_CONTENT: &[u8] = b"ergopilot-station-cli-demo-v1\n";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemoSummary {
     pub first_status: CommandStatus,
@@ -30,6 +32,8 @@ pub enum DemoError {
     Io(#[from] io::Error),
     #[error("recovery did not find the uncertain command")]
     MissingRecoveredCommand,
+    #[error("refusing to overwrite unmarked database at {path}")]
+    RefusingToOverwrite { path: PathBuf },
 }
 
 pub fn run_demo(
@@ -143,18 +147,31 @@ fn write_events(output: &mut impl Write, events: &[CommandEvent]) -> io::Result<
         writeln!(
             output,
             "  event#{:02} {:<22} at={}ms",
-            event.sequence, event.event_type, event.at_ms
+            event.sequence,
+            event.event_type.as_str(),
+            event.at_ms
         )?;
     }
     Ok(())
 }
 
-fn reset_database(path: &Path) -> io::Result<()> {
+fn reset_database(path: &Path) -> Result<(), DemoError> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         fs::create_dir_all(parent)?;
+    }
+
+    let marker = sqlite_sidecar(path, ".ergopilot-demo");
+    if path.exists()
+        && fs::read(&marker)
+            .map(|content| content != DEMO_MARKER_CONTENT)
+            .unwrap_or(true)
+    {
+        return Err(DemoError::RefusingToOverwrite {
+            path: path.to_path_buf(),
+        });
     }
 
     for candidate in [
@@ -165,9 +182,10 @@ fn reset_database(path: &Path) -> io::Result<()> {
         match fs::remove_file(candidate) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         }
     }
+    fs::write(marker, DEMO_MARKER_CONTENT)?;
     Ok(())
 }
 

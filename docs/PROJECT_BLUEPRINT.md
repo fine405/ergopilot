@@ -49,7 +49,8 @@ The first vertical slice must work without an LLM.
 3. An approval resumes the run.
 4. The command reaches the Rust simulator with an idempotency key and expected
    state version.
-5. The simulator emits accepted, progress and terminal events.
+5. The runtime emits accepted, executing, uncertain and verified terminal
+   events; device adapters may also emit progress.
 6. The runtime reads the resulting state before marking the action successful.
 7. A web or Tauri view renders the same run as an ordered timeline.
 8. Re-sending the command does not repeat the physical effect.
@@ -218,15 +219,19 @@ workflow is created.
 ### 5.4 Device command
 
 ```ts
+type DeviceAction = {
+  type: 'desk.move_to_height'
+  input: { heightMm: number }
+}
+
 type DeviceCommand = {
   schemaVersion: 1
   commandId: string
   taskRunId: string
-  capabilityId: string
-  input: unknown
+  action: DeviceAction
   expectedStateVersion: number
   idempotencyKey: string
-  expiresAt: string
+  expiresAtMs: number
   traceId: string
   policyGrantId: string
 }
@@ -235,14 +240,27 @@ type DeviceCommand = {
 ### 5.5 Command event
 
 ```ts
-type CommandEvent =
-  | { type: 'accepted'; commandId: string; at: string }
-  | { type: 'progress'; commandId: string; progress: number; at: string }
-  | { type: 'succeeded'; commandId: string; stateVersion: number; at: string }
-  | { type: 'failed'; commandId: string; error: RuntimeError; at: string }
-  | { type: 'cancelled'; commandId: string; at: string }
-  | { type: 'expired'; commandId: string; at: string }
+type CommandEventType =
+  | 'accepted'
+  | 'executing'
+  | 'outcome_unknown'
+  | 'verified_succeeded'
+  | 'verification_failed'
+  | 'execution_failed'
+  | 'reconciliation_pending'
+  | 'reconciled_succeeded'
+
+type CommandEvent = {
+  sequence: number
+  commandId: string
+  eventType: CommandEventType
+  atMs: number
+}
 ```
+
+This initial event envelope is deliberately closed and JSON-tested. Progress,
+cancellation and structured error payloads extend it alongside the task runtime
+rather than entering the journal as arbitrary strings.
 
 ### 5.6 Policy decision
 
@@ -320,6 +338,11 @@ stateDiagram-v2
 ```
 
 ### 7.1 Invariants
+
+These are target invariants for the complete MVP. The current local slice
+enforces command expiry and the presence of a grant identifier; grant
+authenticity, action scope and grant expiry are delivered by the next policy
+slice.
 
 1. Every device command belongs to an existing task run.
 2. Every action command carries a non-expired policy grant.

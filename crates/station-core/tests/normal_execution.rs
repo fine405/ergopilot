@@ -5,6 +5,7 @@ use station_core::{DeviceAdapter, DeviceError, DeviceExecution, RuntimeError, St
 
 struct TestDevice {
     snapshot: WorkstationSnapshot,
+    fail_before_effect: bool,
 }
 
 impl TestDevice {
@@ -18,6 +19,14 @@ impl TestDevice {
                 desk_height_mm: 720,
                 movement_count: 0,
             },
+            fail_before_effect: false,
+        }
+    }
+
+    fn unavailable() -> Self {
+        Self {
+            fail_before_effect: true,
+            ..Self::new()
         }
     }
 }
@@ -28,7 +37,17 @@ impl DeviceAdapter for TestDevice {
         Ok(self.snapshot.clone())
     }
 
-    fn apply(&mut self, action: &DeviceAction) -> Result<DeviceExecution, DeviceError> {
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        if self.fail_before_effect {
+            return Err(DeviceError::new("device is unavailable before dispatch"));
+        }
+        if self.snapshot.state_version != expected_state_version {
+            return Err(DeviceError::new("state version changed before effect"));
+        }
         self.snapshot.desk_height_mm = action.target_height_mm();
         self.snapshot.state_version += 1;
         self.snapshot.movement_count += 1;
@@ -193,4 +212,25 @@ fn unsupported_command_schema_is_rejected_before_the_device_moves() {
         } if actual == SCHEMA_VERSION + 1
     ));
     assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
+}
+
+#[test]
+fn definite_device_failure_becomes_terminal_and_observable() {
+    let mut runtime = StationRuntime::in_memory(TestDevice::unavailable()).unwrap();
+    let command = desk_command();
+
+    let error = runtime.execute(command.clone(), 1_000).unwrap_err();
+    assert!(matches!(error, RuntimeError::Device(_)));
+
+    let events = runtime.events(&command.command_id).unwrap();
+    let event_types: Vec<_> = events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert_eq!(event_types, ["accepted", "executing", "execution_failed"]);
+
+    let replay = runtime.execute(command, 1_100).unwrap();
+    assert_eq!(replay.status, CommandStatus::Failed);
+    assert!(replay.was_replayed);
+    assert_eq!(runtime.snapshot(1_101).unwrap().movement_count, 0);
 }

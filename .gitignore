@@ -4,6 +4,7 @@
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.sqlite.ergopilot-demo
 .DS_Store
 .env
 .env.*

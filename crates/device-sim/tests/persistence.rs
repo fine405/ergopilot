@@ -10,7 +10,10 @@ fn simulated_physical_state_survives_a_process_restart() {
     let mut first_process = SqliteSimulator::open(&database).unwrap();
     let before = first_process.snapshot(1_000).unwrap();
     let report = first_process
-        .apply(&DeviceAction::DeskMoveToHeight { height_mm: 760 })
+        .apply(
+            &DeviceAction::DeskMoveToHeight { height_mm: 760 },
+            before.state_version,
+        )
         .unwrap();
     assert_eq!(report, DeviceExecution::Reported);
     drop(first_process);

@@ -272,6 +272,7 @@ dependencies = [
  "ergopilot-protocol",
  "rusqlite",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

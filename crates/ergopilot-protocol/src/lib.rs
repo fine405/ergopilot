@@ -6,7 +6,10 @@ pub const SCHEMA_VERSION: u16 = 1;
 #[serde(tag = "type", content = "input")]
 pub enum DeviceAction {
     #[serde(rename = "desk.move_to_height")]
-    DeskMoveToHeight { height_mm: u16 },
+    DeskMoveToHeight {
+        #[serde(rename = "heightMm")]
+        height_mm: u16,
+    },
 }
 
 impl DeviceAction {
@@ -87,6 +90,34 @@ pub struct CommandView {
 pub struct CommandEvent {
     pub sequence: u64,
     pub command_id: String,
-    pub event_type: String,
+    pub event_type: CommandEventType,
     pub at_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandEventType {
+    Accepted,
+    Executing,
+    OutcomeUnknown,
+    VerifiedSucceeded,
+    VerificationFailed,
+    ExecutionFailed,
+    ReconciliationPending,
+    ReconciledSucceeded,
+}
+
+impl CommandEventType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Executing => "executing",
+            Self::OutcomeUnknown => "outcome_unknown",
+            Self::VerifiedSucceeded => "verified_succeeded",
+            Self::VerificationFailed => "verification_failed",
+            Self::ExecutionFailed => "execution_failed",
+            Self::ReconciliationPending => "reconciliation_pending",
+            Self::ReconciledSucceeded => "reconciled_succeeded",
+        }
+    }
 }

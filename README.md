@@ -35,7 +35,8 @@ The first local-runtime tracer bullet is runnable. It currently implements:
 - a versioned `DeviceCommand` protocol;
 - a narrow Rust device-adapter boundary;
 - SQLite command journaling and an SQLite-backed desk simulator;
-- local policy-grant, expiry, safe-envelope and stale-state checks;
+- policy-grant identifier presence, command expiry, safe-envelope and
+  stale-state checks;
 - persist-before-effect execution and read-after-write verification;
 - idempotent replay without a second physical effect;
 - fault injection for “effect happened, acknowledgement was lost”;
@@ -52,12 +53,14 @@ Run the verification suite:
 ```bash
 pnpm test
 pnpm check
+pnpm lint
 ```
 
 The demo intentionally has no LLM dependency: its task is fixed so that the
 execution and recovery semantics can be tested deterministically. The next
-vertical slice adds the task/policy approval state machine and a web timeline;
-Mastra planning is attached only after those boundaries are reliable.
+vertical slice adds a real, expiring and action-scoped policy grant, the
+task/approval state machine and a web timeline; Mastra planning is attached only
+after those boundaries are reliable.
 
 Key modules:
 
