@@ -1,0 +1,11 @@
+{
+  "name": "ergopilot",
+  "private": true,
+  "packageManager": "pnpm@9.9.0",
+  "scripts": {
+    "check": "cargo check --workspace",
+    "demo": "cargo run -p station-cli -- target/ergopilot-demo.sqlite",
+    "format": "cargo fmt --all --check",
+    "test": "cargo test --workspace"
+  }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "device-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ergopilot-protocol = { path = "../ergopilot-protocol" }
+rusqlite.workspace = true
+station-core = { path = "../station-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

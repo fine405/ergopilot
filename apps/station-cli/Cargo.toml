@@ -1,0 +1,15 @@
+[package]
+name = "station-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+device-sim = { path = "../../crates/device-sim" }
+ergopilot-protocol = { path = "../../crates/ergopilot-protocol" }
+station-core = { path = "../../crates/station-core" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
