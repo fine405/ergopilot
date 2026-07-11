@@ -55,6 +55,43 @@ impl DeviceAdapter for TestDevice {
     }
 }
 
+struct ReadbackFailureDevice {
+    snapshot: WorkstationSnapshot,
+    fail_next_snapshot: bool,
+}
+
+impl ReadbackFailureDevice {
+    fn new() -> Self {
+        Self {
+            snapshot: TestDevice::new().snapshot,
+            fail_next_snapshot: false,
+        }
+    }
+}
+
+impl DeviceAdapter for ReadbackFailureDevice {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        if std::mem::take(&mut self.fail_next_snapshot) {
+            return Err(DeviceError::new("post-effect readback unavailable"));
+        }
+        self.snapshot.observed_at_ms = observed_at_ms;
+        Ok(self.snapshot.clone())
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        assert_eq!(self.snapshot.state_version, expected_state_version);
+        self.snapshot.desk_height_mm = action.target_height_mm();
+        self.snapshot.state_version += 1;
+        self.snapshot.movement_count += 1;
+        self.fail_next_snapshot = true;
+        Ok(DeviceExecution::Reported)
+    }
+}
+
 fn desk_command() -> DeviceCommand {
     DeviceCommand {
         schema_version: SCHEMA_VERSION,
@@ -233,4 +270,35 @@ fn definite_device_failure_becomes_terminal_and_observable() {
     assert_eq!(replay.status, CommandStatus::Failed);
     assert!(replay.was_replayed);
     assert_eq!(runtime.snapshot(1_101).unwrap().movement_count, 0);
+}
+
+#[test]
+fn failed_post_effect_readback_is_recorded_as_uncertain_then_reconciled() {
+    let mut runtime = StationRuntime::in_memory(ReadbackFailureDevice::new()).unwrap();
+    let command = desk_command();
+
+    let error = runtime.execute(command.clone(), 1_000).unwrap_err();
+    assert!(matches!(error, RuntimeError::Device(_)));
+
+    let replay = runtime.execute(command.clone(), 1_050).unwrap();
+    assert_eq!(replay.status, CommandStatus::OutcomeUnknown);
+    let recovered = runtime.reconcile_pending(1_100).unwrap();
+    assert_eq!(recovered[0].status, CommandStatus::Succeeded);
+    assert_eq!(runtime.snapshot(1_101).unwrap().movement_count, 1);
+
+    let event_types: Vec<_> = runtime
+        .events(&command.command_id)
+        .unwrap()
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect();
+    assert_eq!(
+        event_types,
+        [
+            "accepted",
+            "executing",
+            "outcome_unknown",
+            "reconciled_succeeded"
+        ]
+    );
 }

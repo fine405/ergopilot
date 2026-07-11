@@ -225,7 +225,19 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             });
         }
 
-        let observed = self.device.snapshot(now_ms)?;
+        let observed = match self.device.snapshot(now_ms) {
+            Ok(observed) => observed,
+            Err(error) => {
+                self.transition_with_event(
+                    &command.command_id,
+                    "outcome_unknown",
+                    None,
+                    CommandEventType::OutcomeUnknown,
+                    now_ms,
+                )?;
+                return Err(RuntimeError::Device(error));
+            }
+        };
         let verified = observed.desk_height_mm == command.action.target_height_mm();
         let status = if verified {
             CommandStatus::Succeeded
