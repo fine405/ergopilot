@@ -1,4 +1,8 @@
-import type { TaskRunView, TaskSpec } from "@ergopilot/contracts";
+import type {
+  TaskPlanRequest,
+  TaskRunView,
+  TaskSpec,
+} from "@ergopilot/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHydrated } from "@tanstack/react-router";
 import { Boxes, Radio } from "lucide-react";
@@ -6,6 +10,7 @@ import { Boxes, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { controlPlane } from "@/lib/control-plane";
 
+import { AgentPlannerCard } from "./agent-planner-card";
 import { RunOverview } from "./run-overview";
 import { StationCard } from "./station-card";
 import { TaskComposer } from "./task-composer";
@@ -34,6 +39,9 @@ export function OperatorConsole({
     retry: false,
   });
 
+  const planMutation = useMutation({
+    mutationFn: (request: TaskPlanRequest) => controlPlane.planTask(request),
+  });
   const startMutation = useMutation({
     mutationFn: (task: TaskSpec) => controlPlane.startTask(task),
     onSuccess: async (run) => {
@@ -123,6 +131,22 @@ export function OperatorConsole({
 
       <main className="mx-auto grid max-w-[90rem] gap-6 px-5 py-6 lg:grid-cols-12 lg:px-8 lg:py-8">
         <aside className="space-y-6 lg:col-span-4 xl:col-span-3">
+          <AgentPlannerCard
+            plan={planMutation.data}
+            plannedRequest={planMutation.variables}
+            onGenerate={(request) => {
+              planMutation.reset();
+              startMutation.reset();
+              return planMutation.mutateAsync(request).then(() => undefined);
+            }}
+            onStart={(task) =>
+              startMutation.mutateAsync(task).then(() => undefined)
+            }
+            isPlanning={planMutation.isPending}
+            isStarting={startMutation.isPending}
+            planningError={errorMessage(planMutation.error)}
+            startError={errorMessage(startMutation.error)}
+          />
           <TaskComposer
             onSubmit={(task) =>
               startMutation.mutateAsync(task).then(() => undefined)

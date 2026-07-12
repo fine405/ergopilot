@@ -1,4 +1,8 @@
-import { approvalRequestSchema, taskSpecSchema } from "@ergopilot/contracts";
+import {
+  approvalRequestSchema,
+  taskPlanRequestSchema,
+  taskSpecSchema,
+} from "@ergopilot/contracts";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -6,10 +10,12 @@ import { cors } from "hono/cors";
 
 import type { StationClient } from "./station-client";
 import { StationRpcError } from "./station-client";
+import { PlannerError, type TaskPlanner } from "./task-planner";
 
 export interface AppOptions {
   now?: () => number;
   allowedOrigin?: string;
+  planner?: TaskPlanner;
 }
 
 export function createApp(station: StationClient, options: AppOptions = {}) {
@@ -35,6 +41,27 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     )
     .get("/api/health", (context) =>
       context.json({ status: "ok", stationAdapter: "process" as const }),
+    )
+    .post(
+      "/api/task-plans",
+      zValidator("json", taskPlanRequestSchema),
+      async (context) => {
+        if (!options.planner) {
+          return context.json(
+            {
+              error: {
+                code: "planner_unavailable",
+                message:
+                  "OPENAI_API_KEY is required for natural-language planning",
+              },
+            },
+            503,
+          );
+        }
+        return context.json(
+          await options.planner.plan(context.req.valid("json")),
+        );
+      },
     )
     .post(
       "/api/task-runs",
@@ -76,6 +103,12 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     ),
   );
   app.onError((error, context) => {
+    if (error instanceof PlannerError) {
+      return context.json(
+        { error: { code: error.code, message: error.message } },
+        502,
+      );
+    }
     if (error instanceof StationRpcError) {
       return context.json(
         { error: { code: error.code, message: error.message } },

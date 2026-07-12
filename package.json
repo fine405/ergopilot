@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.9.0",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "cargo build --workspace && pnpm -r --if-present build",

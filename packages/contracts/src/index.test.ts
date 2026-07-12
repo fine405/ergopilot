@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { taskRunViewSchema, taskSpecSchema } from "./index";
+import {
+  taskPlanDraftSchema,
+  taskPlanRequestSchema,
+  taskPlanResponseSchema,
+  taskRunViewSchema,
+  taskSpecSchema,
+} from "./index";
 
 describe("TaskSpec contract", () => {
   it("matches the versioned planner-to-runtime payload", () => {
@@ -69,6 +75,73 @@ describe("TaskSpec contract", () => {
         assumptions: Array.from({ length: 17 }, () => "bounded"),
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("Task planning contract", () => {
+  it("accepts a bounded natural-language request and generated plan", () => {
+    expect(
+      taskPlanRequestSchema.parse({
+        prompt: "Raise the desk for a 45 minute focus session",
+        requestedBy: "user-1",
+      }),
+    ).toEqual({
+      prompt: "Raise the desk for a 45 minute focus session",
+      requestedBy: "user-1",
+    });
+    expect(
+      taskPlanDraftSchema.parse({
+        targetHeightMm: 780,
+        durationMinutes: 45,
+        interruptionPolicy: "critical-only",
+        assumptions: ["Desk movement area is clear"],
+      }).targetHeightMm,
+    ).toBe(780);
+  });
+
+  it("rejects oversized prompts and unsafe generated desk heights", () => {
+    expect(
+      taskPlanRequestSchema.safeParse({
+        prompt: "x".repeat(2_001),
+        requestedBy: "user-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      taskPlanDraftSchema.safeParse({
+        targetHeightMm: 1_400,
+        durationMinutes: 45,
+        interruptionPolicy: "critical-only",
+        assumptions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires planner provenance on the final TaskSpec", () => {
+    const response = taskPlanResponseSchema.parse({
+      task: {
+        schemaVersion: 1,
+        taskId: "task-agent-1",
+        goal: "prepare_focus_session",
+        requestedBy: "user-1",
+        constraints: {
+          durationMinutes: 45,
+          interruptionPolicy: "critical-only",
+        },
+        assumptions: ["Desk movement area is clear"],
+        steps: [
+          {
+            stepId: "desk-1",
+            action: {
+              type: "desk.move_to_height",
+              input: { heightMm: 780 },
+            },
+          },
+        ],
+      },
+      planner: { framework: "mastra", model: "openai/gpt-5.5" },
+    });
+
+    expect(response.planner.framework).toBe("mastra");
   });
 });
 

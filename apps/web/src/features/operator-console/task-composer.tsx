@@ -62,10 +62,10 @@ export function TaskComposer({
         <div className="mb-2 flex size-9 items-center justify-center rounded-lg border bg-muted">
           <MoveVertical className="size-4 text-primary" aria-hidden="true" />
         </div>
-        <CardTitle>Prepare focus session</CardTitle>
+        <CardTitle>Manual task builder</CardTitle>
         <CardDescription>
-          Create one typed workstation task. Motion stays paused until you
-          approve it.
+          Deterministic fallback with no model dependency. Motion still waits
+          for approval.
         </CardDescription>
       </CardHeader>
       <CardContent>

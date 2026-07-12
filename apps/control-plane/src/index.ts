@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 
 import { createApp } from "./app";
 import { createProcessStationClient } from "./station-client";
+import { createMastraTaskPlanner } from "./task-planner";
 
 try {
   loadEnvFile(fileURLToPath(new URL("../../../.env", import.meta.url)));
@@ -14,10 +15,13 @@ try {
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const hostname = "127.0.0.1";
 const allowedOrigin = process.env.ERGOPILOT_WEB_ORIGIN;
-const app = createApp(
-  createProcessStationClient(),
-  allowedOrigin ? { allowedOrigin } : {},
-);
+const planner = process.env.OPENAI_API_KEY?.trim()
+  ? createMastraTaskPlanner()
+  : undefined;
+const app = createApp(createProcessStationClient(), {
+  ...(allowedOrigin ? { allowedOrigin } : {}),
+  ...(planner ? { planner } : {}),
+});
 const server = serve({ fetch: app.fetch, hostname, port });
 
 console.log(`ErgoPilot control plane listening on http://${hostname}:${port}`);

@@ -1,6 +1,9 @@
 import {
+  type TaskPlanRequest,
+  type TaskPlanResponse,
   type TaskRunView,
   type TaskSpec,
+  taskPlanResponseSchema,
   taskRunViewSchema,
   type WorkstationSnapshot,
   workstationSnapshotSchema,
@@ -24,6 +27,7 @@ export class ControlPlaneError extends Error {
 }
 
 export interface ControlPlane {
+  planTask(request: TaskPlanRequest): Promise<TaskPlanResponse>;
   startTask(task: TaskSpec): Promise<TaskRunView>;
   inspectTask(runId: string): Promise<TaskRunView>;
   approveTask(runId: string, approvedBy: string): Promise<TaskRunView>;
@@ -36,6 +40,13 @@ export class HonoControlPlane implements ControlPlane {
 
   constructor(baseUrl: string) {
     this.#client = hc<AppType>(baseUrl);
+  }
+
+  async planTask(request: TaskPlanRequest): Promise<TaskPlanResponse> {
+    const response = await this.#client.api["task-plans"].$post({
+      json: request,
+    });
+    return parseResponse(response, taskPlanResponseSchema);
   }
 
   async startTask(task: TaskSpec): Promise<TaskRunView> {

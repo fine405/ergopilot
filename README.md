@@ -31,6 +31,8 @@ runnable end to end. The current slice implements:
 - reconciliation across both task/command dispatch crash windows;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
+- an optional Mastra planner that converts natural language into a bounded,
+  server-validated `TaskSpec` without receiving execution authority;
 - server-owned timestamps and schema validation at the API boundary;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
@@ -46,7 +48,7 @@ parts are not claimed as implemented yet.
 
 ## Run locally
 
-Prerequisites: Rust, Node.js and pnpm.
+Prerequisites: Rust, Node.js 22.13 or newer, and pnpm.
 
 ```bash
 pnpm install
@@ -57,6 +59,8 @@ Open <http://localhost:3000>. The control plane listens on
 <http://localhost:8787>. Local development has a non-production policy key;
 copy `.env.example` to `.env` when you want to override paths, origins or
 credentials. Relative station paths are resolved from the repository root.
+Set `OPENAI_API_KEY` in `.env` to enable the Mastra planning card. Without a
+key, the deterministic task builder and complete execution path remain usable.
 
 The deterministic CLI demos remain available:
 
@@ -75,22 +79,23 @@ pnpm test
 pnpm build
 ```
 
-The tracer bullet intentionally has no LLM dependency. Its fixed typed task
-makes execution, approval, idempotency and recovery behavior reproducible. A
-Mastra planner will later translate natural-language intent into the same
-validated `TaskSpec`; it will not receive authority over policy or device
-execution.
+The execution tracer bullet intentionally retains no LLM dependency. Its fixed
+typed task keeps approval, idempotency and recovery behavior reproducible. The
+optional Mastra planner now translates natural-language intent into the same
+validated `TaskSpec`; generated plans require explicit confirmation and never
+receive authority over policy or device execution.
 
 ## Stack decisions
 
 - **Rust + SQLite:** authoritative local task, policy and device runtime.
-- **Hono on Node.js:** a thin typed control-plane boundary for the local slice.
+- **Hono + Mastra on Node.js:** a typed control-plane boundary plus optional
+  structured planning.
 - **TanStack Start + Query:** routing, reload-safe URL state and server-state
   synchronization for the web console.
 - **shadcn/ui:** deterministic product UI such as cards, status, forms and the
   explicit approval dialog.
-- **AI Elements, later:** only for actual model-generated explanations, plans
-  and AI SDK tool parts after the Mastra planner exists.
+- **AI Elements, selectively:** the `Task` element renders generated plans;
+  deterministic forms, approval and device state remain shadcn/ui.
 - **assistant-ui, deferred:** useful only if multi-thread conversation becomes
   a real product requirement; ErgoPilot remains task-first rather than
   chat-first.
@@ -101,7 +106,8 @@ execution.
 ## Key modules
 
 - `packages/contracts`: shared Zod schemas and TypeScript types;
-- `apps/control-plane`: Hono routes and the bounded Rust process adapter;
+- `apps/control-plane`: Hono routes, Mastra planner and bounded Rust process
+  adapter;
 - `apps/web`: TanStack Start operator console;
 - `apps/station-cli`: JSON RPC boundary and executable recovery demos;
 - `crates/ergopilot-protocol`: versioned Rust command and event types;

@@ -19,6 +19,7 @@
     "@ergopilot/contracts": "workspace:*",
     "@hono/node-server": "^1.0.0",
     "@hono/zod-validator": "^0.7.0",
+    "@mastra/core": "^1.50.1",
     "hono": "^4.0.0",
     "zod": "^4.0.0"
   },

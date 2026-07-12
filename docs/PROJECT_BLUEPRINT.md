@@ -1,7 +1,8 @@
 # ErgoPilot project blueprint
 
 Status: implementation in progress; the local Rust command/recovery runtime,
-signed policy/approval path, Hono API and TanStack Start console run end to end
+signed policy/approval path, Hono API, optional Mastra planner and TanStack
+Start console run end to end
 
 Assumed portfolio schedule: 4–6 weeks
 
@@ -461,13 +462,14 @@ and demonstrations.
 ### 10.3 UI ownership
 
 Use shadcn/ui as the base design system. Add selected AI Elements only when a
-screen is rendering actual AI SDK message or tool parts:
+screen is rendering model-generated structured content or actual AI SDK message
+or tool parts:
 
 | Need | UI implementation |
 | --- | --- |
 | AI explanation | AI Elements `MessageResponse` |
-| User input | AI Elements `PromptInput` |
-| Semantic plan | AI Elements `Plan` or `Task` |
+| User input | shadcn/ui `Textarea` for the current text-only request |
+| Semantic plan | AI Elements `Task` |
 | Tool state | AI Elements `Tool` with domain labels |
 | Deterministic human approval | shadcn/ui `AlertDialog` wired to task state |
 | AI-initiated tool confirmation | AI Elements `Confirmation` after AI SDK integration |
@@ -485,9 +487,10 @@ assistant-ui is deferred. If multi-thread conversation management becomes a
 real requirement, it may own chat state only; task and device state remain in
 their existing authoritative systems.
 
-The current console contains no generated prose or AI SDK tool part, so it uses
-shadcn/ui only. This keeps a deterministic approval from being disguised as a
-chat interaction; AI Elements enter with the Mastra planner slice.
+The current console uses AI Elements `Task` for the model-generated structured
+plan and shadcn/ui for the text-only input and deterministic approval. The
+richer `PromptInput` is deferred until attachments or model selection are real
+requirements; assistant-ui remains unnecessary for this task-first surface.
 
 ## 11. Repository layout
 
@@ -496,7 +499,7 @@ ergopilot/
 ├── apps/
 │   ├── station-cli/         # executable recovery and approval demos
 │   ├── web/                 # current TanStack Start operator console
-│   ├── control-plane/       # current Hono API and station process adapter
+│   ├── control-plane/       # Hono, Mastra and station process adapter
 │   └── station/             # Tauri application
 ├── crates/
 │   ├── ergopilot-protocol/  # versioned cross-runtime JSON types
@@ -569,6 +572,11 @@ WebSocket and hosted deployment remain the next remote-coordination slice.
 
 Exit criterion: the primary natural-language demo completes and survives a
 browser reload, control-plane restart and station reconnect.
+
+Current milestone: the local Mastra planner produces an atomically validated
+single-step `TaskSpec`, and the user must confirm it before the existing policy
+and approval runtime begins. Durable cloud workflow, streaming explanation and
+station reconnect remain future slices.
 
 ### Week 5 — observability and evaluation
 

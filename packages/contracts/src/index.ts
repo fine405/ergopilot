@@ -54,6 +54,34 @@ export const taskSpecSchema = z
   })
   .strict();
 
+export const taskPlanRequestSchema = z
+  .object({
+    prompt: z.string().trim().min(1).max(2_000),
+    requestedBy: actorIdSchema,
+  })
+  .strict();
+
+export const taskPlanDraftSchema = z
+  .object({
+    targetHeightMm: z.number().int().min(620).max(1_280),
+    durationMinutes: z.number().int().min(15).max(180),
+    interruptionPolicy: z.enum(["normal", "critical-only"]),
+    assumptions: z.array(assumptionSchema).max(8),
+  })
+  .strict();
+
+export const taskPlanResponseSchema = z
+  .object({
+    task: taskSpecSchema,
+    planner: z
+      .object({
+        framework: z.literal("mastra"),
+        model: z.string().trim().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
 export const policyDecisionSchema = z
   .object({
     outcome: z.enum(["allow", "require_approval", "deny"]),
@@ -174,6 +202,9 @@ export const approvalRequestSchema = z
   .strict();
 
 export type DeviceAction = z.infer<typeof deviceActionSchema>;
+export type TaskPlanDraft = z.infer<typeof taskPlanDraftSchema>;
+export type TaskPlanRequest = z.infer<typeof taskPlanRequestSchema>;
+export type TaskPlanResponse = z.infer<typeof taskPlanResponseSchema>;
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
 export type TaskRunView = z.infer<typeof taskRunViewSchema>;
 export type WorkstationSnapshot = z.infer<typeof workstationSnapshotSchema>;
