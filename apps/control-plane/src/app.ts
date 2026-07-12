@@ -10,12 +10,16 @@ import { cors } from "hono/cors";
 
 import type { StationClient } from "./station-client";
 import { StationRpcError } from "./station-client";
-import { PlannerError, type TaskPlanner } from "./task-planner";
+import {
+  describePlannerProviders,
+  PlannerError,
+  type TaskPlannerRegistry,
+} from "./task-planner";
 
 export interface AppOptions {
   now?: () => number;
   allowedOrigin?: string;
-  planner?: TaskPlanner;
+  planners?: TaskPlannerRegistry;
 }
 
 export function createApp(station: StationClient, options: AppOptions = {}) {
@@ -42,25 +46,27 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     .get("/api/health", (context) =>
       context.json({ status: "ok", stationAdapter: "process" as const }),
     )
+    .get("/api/planner-providers", (context) =>
+      context.json(describePlannerProviders(options.planners ?? {})),
+    )
     .post(
       "/api/task-plans",
       zValidator("json", taskPlanRequestSchema),
       async (context) => {
-        if (!options.planner) {
+        const request = context.req.valid("json");
+        const planner = options.planners?.[request.provider];
+        if (!planner) {
           return context.json(
             {
               error: {
-                code: "planner_unavailable",
-                message:
-                  "OPENAI_API_KEY is required for natural-language planning",
+                code: "provider_unavailable",
+                message: `${request.provider} planner provider is not configured`,
               },
             },
             503,
           );
         }
-        return context.json(
-          await options.planner.plan(context.req.valid("json")),
-        );
+        return context.json(await planner.plan(request));
       },
     )
     .post(

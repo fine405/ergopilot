@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  plannerProvidersResponseSchema,
   taskPlanDraftSchema,
   taskPlanRequestSchema,
   taskPlanResponseSchema,
@@ -79,13 +80,51 @@ describe("TaskSpec contract", () => {
 });
 
 describe("Task planning contract", () => {
+  it("describes configured and disabled planner providers", () => {
+    expect(
+      plannerProvidersResponseSchema.parse({
+        providers: [
+          {
+            id: "openai",
+            name: "OpenAI",
+            model: "openai/gpt-5.5",
+            enabled: false,
+          },
+          {
+            id: "deepseek",
+            name: "DeepSeek",
+            model: "deepseek/deepseek-v4-flash",
+            enabled: true,
+          },
+        ],
+      }),
+    ).toEqual({
+      providers: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          model: "openai/gpt-5.5",
+          enabled: false,
+        },
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          model: "deepseek/deepseek-v4-flash",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it("accepts a bounded natural-language request and generated plan", () => {
     expect(
       taskPlanRequestSchema.parse({
+        provider: "deepseek",
         prompt: "Raise the desk for a 45 minute focus session",
         requestedBy: "user-1",
       }),
     ).toEqual({
+      provider: "deepseek",
       prompt: "Raise the desk for a 45 minute focus session",
       requestedBy: "user-1",
     });
@@ -138,10 +177,14 @@ describe("Task planning contract", () => {
           },
         ],
       },
-      planner: { framework: "mastra", model: "openai/gpt-5.5" },
+      planner: {
+        framework: "mastra",
+        provider: "openai",
+        model: "openai/gpt-5.5",
+      },
     });
 
-    expect(response.planner.framework).toBe("mastra");
+    expect(response.planner.provider).toBe("openai");
   });
 });
 

@@ -71,19 +71,50 @@ const task: TaskSpec = {
 
 const plannedTask: TaskPlanResponse = {
   task,
-  planner: { framework: "mastra", model: "openai/gpt-5.5" },
+  planner: {
+    framework: "mastra",
+    provider: "deepseek",
+    model: "deepseek/deepseek-v4-flash",
+  },
 };
 
 describe("control-plane API", () => {
+  it("reports configured and disabled planner providers", async () => {
+    const app = createApp(fakeStation(), {
+      planners: { deepseek: fakePlanner() },
+    });
+
+    const response = await app.request("/api/planner-providers");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      providers: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          model: "openai/gpt-5.5",
+          enabled: false,
+        },
+        {
+          id: "deepseek",
+          name: "DeepSeek",
+          model: "deepseek/deepseek-v4-flash",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it("returns a validated agent plan without starting device execution", async () => {
     const station = fakeStation();
     const planner = fakePlanner();
-    const app = createApp(station, { planner });
+    const app = createApp(station, { planners: { deepseek: planner } });
 
     const response = await app.request("/api/task-plans", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        provider: "deepseek",
         prompt: "Prepare a 45 minute standing focus session",
         requestedBy: "user-1",
       }),
@@ -92,19 +123,22 @@ describe("control-plane API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(plannedTask);
     expect(planner.plan).toHaveBeenCalledWith({
+      provider: "deepseek",
       prompt: "Prepare a 45 minute standing focus session",
       requestedBy: "user-1",
     });
     expect(station.startTask).not.toHaveBeenCalled();
   });
 
-  it("reports that the planner is unavailable without an API key", async () => {
-    const app = createApp(fakeStation());
+  it("rejects a disabled provider without falling back to another one", async () => {
+    const openai = fakePlanner();
+    const app = createApp(fakeStation(), { planners: { openai } });
 
     const response = await app.request("/api/task-plans", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        provider: "deepseek",
         prompt: "Prepare a focus session",
         requestedBy: "user-1",
       }),
@@ -113,10 +147,11 @@ describe("control-plane API", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       error: {
-        code: "planner_unavailable",
-        message: "OPENAI_API_KEY is required for natural-language planning",
+        code: "provider_unavailable",
+        message: "deepseek planner provider is not configured",
       },
     });
+    expect(openai.plan).not.toHaveBeenCalled();
   });
 
   it("returns a stable error when model output cannot form a plan", async () => {
@@ -128,12 +163,13 @@ describe("control-plane API", () => {
         );
       }),
     };
-    const app = createApp(fakeStation(), { planner });
+    const app = createApp(fakeStation(), { planners: { deepseek: planner } });
 
     const response = await app.request("/api/task-plans", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
+        provider: "deepseek",
         prompt: "Prepare a focus session",
         requestedBy: "user-1",
       }),

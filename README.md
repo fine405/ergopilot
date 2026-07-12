@@ -59,8 +59,10 @@ Open <http://localhost:3000>. The control plane listens on
 <http://localhost:8787>. Local development has a non-production policy key;
 copy `.env.example` to `.env` when you want to override paths, origins or
 credentials. Relative station paths are resolved from the repository root.
-Set `OPENAI_API_KEY` in `.env` to enable the Mastra planning card. Without a
-key, the deterministic task builder and complete execution path remain usable.
+Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
+matching Mastra planner providers. The provider selector shows missing-key
+providers as disabled. Without either key, the deterministic task builder and
+complete execution path remain usable.
 
 The deterministic CLI demos remain available:
 
@@ -89,7 +91,7 @@ receive authority over policy or device execution.
 
 - **Rust + SQLite:** authoritative local task, policy and device runtime.
 - **Hono + Mastra on Node.js:** a typed control-plane boundary plus optional
-  structured planning.
+  OpenAI or DeepSeek structured planning.
 - **TanStack Start + Query:** routing, reload-safe URL state and server-state
   synchronization for the web console.
 - **shadcn/ui:** deterministic product UI such as cards, status, forms and the

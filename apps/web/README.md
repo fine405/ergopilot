@@ -9,7 +9,8 @@ Run the complete system from the repository root with `pnpm dev`. The browser
 uses `http://localhost:8787` by default; set `VITE_CONTROL_PLANE_URL` to point at
 another Hono control plane.
 
-shadcn/ui owns the deterministic controls. AI Elements `Task` renders the
-generated plan; richer AI message components and assistant-ui remain deferred
+shadcn/ui owns the deterministic controls. The provider selector enables only
+providers configured by the control plane, and AI Elements `Task` renders the
+generated plan. Richer AI message components and assistant-ui remain deferred
 until model explanations, tools or multi-thread conversation become real
 requirements.

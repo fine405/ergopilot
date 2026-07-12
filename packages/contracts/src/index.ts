@@ -54,8 +54,26 @@ export const taskSpecSchema = z
   })
   .strict();
 
+export const plannerProviderIdSchema = z.enum(["openai", "deepseek"]);
+
+export const plannerProviderSchema = z
+  .object({
+    id: plannerProviderIdSchema,
+    name: z.string().trim().min(1),
+    model: z.string().trim().min(1),
+    enabled: z.boolean(),
+  })
+  .strict();
+
+export const plannerProvidersResponseSchema = z
+  .object({
+    providers: z.array(plannerProviderSchema),
+  })
+  .strict();
+
 export const taskPlanRequestSchema = z
   .object({
+    provider: plannerProviderIdSchema,
     prompt: z.string().trim().min(1).max(2_000),
     requestedBy: actorIdSchema,
   })
@@ -76,6 +94,7 @@ export const taskPlanResponseSchema = z
     planner: z
       .object({
         framework: z.literal("mastra"),
+        provider: plannerProviderIdSchema,
         model: z.string().trim().min(1),
       })
       .strict(),
@@ -202,6 +221,11 @@ export const approvalRequestSchema = z
   .strict();
 
 export type DeviceAction = z.infer<typeof deviceActionSchema>;
+export type PlannerProvider = z.infer<typeof plannerProviderSchema>;
+export type PlannerProviderId = z.infer<typeof plannerProviderIdSchema>;
+export type PlannerProvidersResponse = z.infer<
+  typeof plannerProvidersResponseSchema
+>;
 export type TaskPlanDraft = z.infer<typeof taskPlanDraftSchema>;
 export type TaskPlanRequest = z.infer<typeof taskPlanRequestSchema>;
 export type TaskPlanResponse = z.infer<typeof taskPlanResponseSchema>;

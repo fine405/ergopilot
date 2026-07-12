@@ -38,6 +38,12 @@ export function OperatorConsole({
     enabled: hydrated,
     retry: false,
   });
+  const plannerProvidersQuery = useQuery({
+    queryKey: ["planner-providers"],
+    queryFn: () => controlPlane.plannerProviders(),
+    enabled: hydrated,
+    retry: false,
+  });
 
   const planMutation = useMutation({
     mutationFn: (request: TaskPlanRequest) => controlPlane.planTask(request),
@@ -132,6 +138,8 @@ export function OperatorConsole({
       <main className="mx-auto grid max-w-[90rem] gap-6 px-5 py-6 lg:grid-cols-12 lg:px-8 lg:py-8">
         <aside className="space-y-6 lg:col-span-4 xl:col-span-3">
           <AgentPlannerCard
+            providers={plannerProvidersQuery.data?.providers}
+            providerError={errorMessage(plannerProvidersQuery.error)}
             plan={planMutation.data}
             plannedRequest={planMutation.variables}
             onGenerate={(request) => {

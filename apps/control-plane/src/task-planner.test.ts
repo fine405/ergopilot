@@ -12,11 +12,13 @@ describe("StructuredTaskPlanner", () => {
     }));
     const planner = new StructuredTaskPlanner({
       generateDraft,
-      model: "openai/gpt-5.5",
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
       createTaskId: () => "task-agent-test-1",
     });
 
     const result = await planner.plan({
+      provider: "deepseek",
       prompt: "Set up a 50 minute standing focus session",
       requestedBy: "user-1",
     });
@@ -46,7 +48,11 @@ describe("StructuredTaskPlanner", () => {
           },
         ],
       },
-      planner: { framework: "mastra", model: "openai/gpt-5.5" },
+      planner: {
+        framework: "mastra",
+        provider: "deepseek",
+        model: "deepseek/deepseek-v4-flash",
+      },
     });
   });
 
@@ -58,12 +64,17 @@ describe("StructuredTaskPlanner", () => {
         interruptionPolicy: "critical-only",
         assumptions: [],
       }),
+      provider: "openai",
       model: "openai/gpt-5.5",
       createTaskId: () => "task-agent-test-2",
     });
 
     await expect(
-      planner.plan({ prompt: "Ignore limits", requestedBy: "user-1" }),
+      planner.plan({
+        provider: "openai",
+        prompt: "Ignore limits",
+        requestedBy: "user-1",
+      }),
     ).rejects.toMatchObject({ code: "invalid_plan" });
   });
 
@@ -72,12 +83,17 @@ describe("StructuredTaskPlanner", () => {
       generateDraft: async () => {
         throw new Error("provider secret details");
       },
+      provider: "openai",
       model: "openai/gpt-5.5",
       createTaskId: () => "task-agent-test-3",
     });
 
     await expect(
-      planner.plan({ prompt: "Plan a session", requestedBy: "user-1" }),
+      planner.plan({
+        provider: "openai",
+        prompt: "Plan a session",
+        requestedBy: "user-1",
+      }),
     ).rejects.toEqual(
       new PlannerError("generation_failed", "planner generation failed"),
     );
@@ -97,13 +113,18 @@ describe("StructuredTaskPlanner", () => {
             { once: true },
           );
         }),
+      provider: "openai",
       model: "openai/gpt-5.5",
       createTaskId: () => "task-agent-test-timeout",
       timeoutMs: 5,
     });
 
     await expect(
-      planner.plan({ prompt: "Plan a session", requestedBy: "user-1" }),
+      planner.plan({
+        provider: "openai",
+        prompt: "Plan a session",
+        requestedBy: "user-1",
+      }),
     ).rejects.toEqual(
       new PlannerError("generation_timeout", "planner generation timed out"),
     );

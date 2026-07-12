@@ -1,4 +1,6 @@
 import type {
+  PlannerProvider,
+  PlannerProviderId,
   TaskPlanRequest,
   TaskPlanResponse,
   TaskSpec,
@@ -30,6 +32,8 @@ const examplePrompt =
   "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.";
 
 interface AgentPlannerCardProps {
+  providers: PlannerProvider[] | undefined;
+  providerError?: string | null;
   plan: TaskPlanResponse | undefined;
   plannedRequest: TaskPlanRequest | undefined;
   onGenerate: (request: TaskPlanRequest) => Promise<void>;
@@ -41,6 +45,8 @@ interface AgentPlannerCardProps {
 }
 
 export function AgentPlannerCard({
+  providers,
+  providerError,
   plan,
   plannedRequest,
   onGenerate,
@@ -50,19 +56,32 @@ export function AgentPlannerCard({
   planningError,
   startError,
 }: AgentPlannerCardProps) {
+  const [selectedProviderId, setSelectedProviderId] =
+    useState<PlannerProviderId>();
   const [requestedBy, setRequestedBy] = useState("demo-user");
   const [prompt, setPrompt] = useState(examplePrompt);
+  const providerOptions = providers ?? [];
+  const selectedProvider =
+    providerOptions.find(
+      (provider) => provider.id === selectedProviderId && provider.enabled,
+    ) ?? providerOptions.find((provider) => provider.enabled);
   const planMatchesInput = Boolean(
     plan &&
       !isPlanning &&
+      plannedRequest?.provider === selectedProvider?.id &&
       plannedRequest?.prompt === prompt &&
       plannedRequest.requestedBy === requestedBy,
   );
 
   async function handleGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!selectedProvider) return;
     try {
-      await onGenerate({ prompt, requestedBy });
+      await onGenerate({
+        provider: selectedProvider.id,
+        prompt,
+        requestedBy,
+      });
     } catch {
       // React Query exposes the mutation error through `planningError`.
     }
@@ -97,6 +116,47 @@ export function AgentPlannerCard({
       <CardContent className="space-y-5">
         <form className="space-y-4" onSubmit={handleGenerate}>
           <div className="space-y-2">
+            <Label htmlFor="agent-provider">Provider</Label>
+            <select
+              id="agent-provider"
+              className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+              value={selectedProvider?.id ?? ""}
+              onChange={(event) =>
+                setSelectedProviderId(
+                  event.target.value === "openai" ? "openai" : "deepseek",
+                )
+              }
+              disabled={!providers}
+            >
+              {!providers && (
+                <option value="">
+                  {providerError
+                    ? "Provider status unavailable"
+                    : "Loading providers…"}
+                </option>
+              )}
+              {providers && !selectedProvider && (
+                <option value="">No provider configured</option>
+              )}
+              {providerOptions.map((provider) => (
+                <option
+                  key={provider.id}
+                  value={provider.id}
+                  disabled={!provider.enabled}
+                >
+                  {provider.name} · {provider.model}
+                  {provider.enabled ? "" : " · key missing"}
+                </option>
+              ))}
+            </select>
+          </div>
+          {providerError && (
+            <Alert variant="destructive">
+              <AlertTitle>Provider status unavailable</AlertTitle>
+              <AlertDescription>{providerError}</AlertDescription>
+            </Alert>
+          )}
+          <div className="space-y-2">
             <Label htmlFor="agent-requested-by">Requested by</Label>
             <Input
               id="agent-requested-by"
@@ -121,7 +181,7 @@ export function AgentPlannerCard({
           <Button
             type="submit"
             className="w-full"
-            disabled={isPlanning || isStarting}
+            disabled={!selectedProvider || isPlanning || isStarting}
           >
             {isPlanning ? "Generating plan…" : "Generate safe plan"}
             {!isPlanning && <WandSparkles data-icon="inline-end" />}

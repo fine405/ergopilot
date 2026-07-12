@@ -573,9 +573,10 @@ WebSocket and hosted deployment remain the next remote-coordination slice.
 Exit criterion: the primary natural-language demo completes and survives a
 browser reload, control-plane restart and station reconnect.
 
-Current milestone: the local Mastra planner produces an atomically validated
-single-step `TaskSpec`, and the user must confirm it before the existing policy
-and approval runtime begins. Durable cloud workflow, streaming explanation and
+Current milestone: the local Mastra planner can use an explicitly selected,
+key-enabled OpenAI or DeepSeek provider to produce an atomically validated
+single-step `TaskSpec`. The user must confirm it before the existing policy and
+approval runtime begins. Durable cloud workflow, streaming explanation and
 station reconnect remain future slices.
 
 ### Week 5 — observability and evaluation
