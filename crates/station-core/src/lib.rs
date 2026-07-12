@@ -136,15 +136,6 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         grant: &PolicyGrant,
         now_ms: u64,
     ) -> Result<CommandView, RuntimeError> {
-        self.policy_verifier.verify(grant, &command, now_ms)?;
-        self.execute_verified(command, now_ms)
-    }
-
-    fn execute_verified(
-        &mut self,
-        command: DeviceCommand,
-        now_ms: u64,
-    ) -> Result<CommandView, RuntimeError> {
         if command.schema_version != SCHEMA_VERSION {
             return Err(RuntimeError::UnsupportedSchemaVersion {
                 expected: SCHEMA_VERSION,
@@ -153,6 +144,57 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         }
 
         let command_json = serde_json::to_string(&command)?;
+        if let Some(existing) = self.existing_command_view(&command, &command_json)? {
+            return Ok(existing);
+        }
+
+        if command.policy_grant_id.trim().is_empty() {
+            return Err(RuntimeError::MissingPolicyGrant);
+        }
+        self.policy_verifier.verify(grant, &command, now_ms)?;
+        self.execute_new(command, command_json, now_ms)
+    }
+
+    /// Returns the journaled view only when the supplied command is byte-for-byte
+    /// equivalent to the persisted command behind its idempotency key.
+    pub fn inspect_command(
+        &self,
+        command: &DeviceCommand,
+    ) -> Result<Option<CommandView>, RuntimeError> {
+        if command.schema_version != SCHEMA_VERSION {
+            return Err(RuntimeError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: command.schema_version,
+            });
+        }
+        let command_json = serde_json::to_string(command)?;
+        self.existing_command_view(command, &command_json)
+    }
+
+    /// Resumes an exact, durably planned command after an orchestrator restart.
+    ///
+    /// Existing terminal results are returned without re-authorizing or repeating
+    /// an effect. Existing uncertain commands are reconciled from observed state.
+    /// Only a command absent from the station journal enters the normal, fully
+    /// authorized execution path.
+    pub fn resume_command(
+        &mut self,
+        command: DeviceCommand,
+        grant: &PolicyGrant,
+        now_ms: u64,
+    ) -> Result<CommandView, RuntimeError> {
+        let command_view = self.execute(command, grant, now_ms)?;
+        if command_view.status.is_terminal() {
+            return Ok(command_view);
+        }
+        self.reconcile_command(&command_view.command_id, now_ms)
+    }
+
+    fn existing_command_view(
+        &self,
+        command: &DeviceCommand,
+        command_json: &str,
+    ) -> Result<Option<CommandView>, RuntimeError> {
         let existing = self
             .connection
             .query_row(
@@ -172,27 +214,32 @@ impl<D: DeviceAdapter> StationRuntime<D> {
 
         if let Some((command_id, stored_command_json, status, outcome_json)) = existing {
             if stored_command_json == command_json {
-                return Ok(CommandView {
+                return Ok(Some(CommandView {
                     command_id,
-                    idempotency_key: command.idempotency_key,
+                    idempotency_key: command.idempotency_key.clone(),
                     status: command_status_from_db(&status)?,
                     outcome: outcome_json
                         .as_deref()
                         .map(serde_json::from_str)
                         .transpose()?,
                     was_replayed: true,
-                });
+                }));
             }
 
             return Err(RuntimeError::IdempotencyConflict {
-                key: command.idempotency_key,
+                key: command.idempotency_key.clone(),
             });
         }
 
-        if command.policy_grant_id.trim().is_empty() {
-            return Err(RuntimeError::MissingPolicyGrant);
-        }
+        Ok(None)
+    }
 
+    fn execute_new(
+        &mut self,
+        command: DeviceCommand,
+        command_json: String,
+        now_ms: u64,
+    ) -> Result<CommandView, RuntimeError> {
         if command.expires_at_ms <= now_ms {
             return Err(RuntimeError::ExpiredCommand {
                 expires_at_ms: command.expires_at_ms,

@@ -121,6 +121,7 @@ fn grant_for(command: &DeviceCommand, now_ms: u64) -> PolicyGrant {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: now_ms,
             expires_at_ms: now_ms + 100_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -160,6 +161,33 @@ fn duplicate_delivery_replays_the_existing_result_without_moving_again() {
     assert_eq!(replay.status, CommandStatus::Succeeded);
     assert!(replay.was_replayed);
     assert_eq!(runtime.snapshot(1_101).unwrap().movement_count, 1);
+}
+
+#[test]
+fn exact_replay_returns_the_stored_result_after_authorization_expires() {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let mut runtime = StationRuntime::in_memory(TestDevice::new(), authority.verifier()).unwrap();
+    let mut command = desk_command();
+    command.expires_at_ms = 1_100;
+    let grant = authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
+            issued_at_ms: 900,
+            expires_at_ms: 1_100,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap();
+
+    runtime.execute(command.clone(), &grant, 1_000).unwrap();
+    let replay = runtime.execute(command, &grant, 1_200).unwrap();
+
+    assert_eq!(replay.status, CommandStatus::Succeeded);
+    assert!(replay.was_replayed);
+    assert_eq!(runtime.snapshot(1_201).unwrap().movement_count, 1);
 }
 
 #[test]
@@ -345,6 +373,7 @@ fn expired_signed_grant_is_rejected_before_the_device_moves() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 900,
             expires_at_ms: 1_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],

@@ -9,21 +9,70 @@ use station_core::{DeviceAdapter, RuntimeError, StationRuntime};
 use std::path::Path;
 use thiserror::Error;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "input", rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskGoal {
-    PrepareFocusSession {
-        #[serde(rename = "deskHeightMm")]
-        desk_height_mm: u16,
-    },
+    PrepareFocusSession,
+    RelieveNeckDiscomfort,
+    RestoreProfile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InterruptionPolicy {
+    Normal,
+    CriticalOnly,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskConstraints {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_minutes: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interruption_policy: Option<InterruptionPolicy>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedStep {
+    pub step_id: String,
+    pub action: DeviceAction,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskSpec {
+    pub schema_version: u16,
     pub task_id: String,
-    pub requested_by: String,
     pub goal: TaskGoal,
+    pub requested_by: String,
+    pub constraints: TaskConstraints,
+    pub assumptions: Vec<String>,
+    pub steps: Vec<PlannedStep>,
+}
+
+impl TaskSpec {
+    pub fn prepare_focus_session(
+        task_id: impl Into<String>,
+        requested_by: impl Into<String>,
+        desk_height_mm: u16,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            task_id: task_id.into(),
+            goal: TaskGoal::PrepareFocusSession,
+            requested_by: requested_by.into(),
+            constraints: TaskConstraints::default(),
+            assumptions: Vec::new(),
+            steps: vec![PlannedStep {
+                step_id: "desk-1".into(),
+                action: DeviceAction::DeskMoveToHeight {
+                    height_mm: desk_height_mm,
+                },
+            }],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +175,10 @@ pub enum TaskRuntimeError {
     CorruptRun { run_id: String },
     #[error("task id {task_id} was already used for a different specification")]
     TaskIdConflict { task_id: String },
+    #[error("unsupported task schema version {actual}; this runtime accepts version {expected}")]
+    UnsupportedTaskSchemaVersion { expected: u16, actual: u16 },
+    #[error("invalid task specification: {reason}")]
+    InvalidTaskSpec { reason: &'static str },
     #[error("approval belongs to {expected}, but was submitted by {actual}")]
     UnauthorizedApprover { expected: String, actual: String },
     #[error("task run {run_id} is not awaiting approval")]
@@ -182,6 +235,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     }
 
     pub fn start(&mut self, spec: TaskSpec, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
+        validate_task_spec(&spec)?;
         let run_id = format!("run-{}", spec.task_id);
         if let Some(existing) = self.try_load_run(&run_id)? {
             if existing.spec == spec {
@@ -191,7 +245,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 task_id: spec.task_id,
             });
         }
-        let action = action_for_goal(&spec.goal);
+        let action = spec.steps[0].action.clone();
         let policy_decision = self.policy_authority.evaluate(&action);
         let (status, approval, second_event, expected_state_version) = match policy_decision.outcome
         {
@@ -304,6 +358,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 task_run_id: command.task_run_id.clone(),
                 command_id: command.command_id.clone(),
                 action: command.action.clone(),
+                expected_state_version: command.expected_state_version,
                 issued_at_ms: now_ms,
                 expires_at_ms: command.expires_at_ms,
                 rule_ids: stored.view.policy_decision.rule_ids.clone(),
@@ -329,7 +384,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 })
             }
         };
-        let command_view = match self.station.execute(command, &grant, now_ms) {
+        let mut device_error = None;
+        let command_view = match self.station.execute(command.clone(), &grant, now_ms) {
             Ok(command_view) => command_view,
             Err(RuntimeError::StaleState { .. }) => {
                 stored.view.status = TaskRunStatus::Suspended;
@@ -338,10 +394,15 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 return Ok(stored.view);
             }
             Err(error @ RuntimeError::Device(_)) => {
-                stored.view.status = TaskRunStatus::Failed;
-                append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
-                self.save_run(&stored, now_ms)?;
-                return Err(error.into());
+                if let Some(command_view) = self.station.inspect_command(&command)? {
+                    device_error = Some(error);
+                    command_view
+                } else {
+                    stored.view.status = TaskRunStatus::Failed;
+                    append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
+                    self.save_run(&stored, now_ms)?;
+                    return Err(error.into());
+                }
             }
             Err(error) => return Err(error.into()),
         };
@@ -356,6 +417,11 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         stored.view.command = Some(command_view);
         append_event(&mut stored.view, event_type, now_ms);
         self.save_run(&stored, now_ms)?;
+        if status == TaskRunStatus::Failed {
+            if let Some(error) = device_error {
+                return Err(error.into());
+            }
+        }
         Ok(stored.view)
     }
 
@@ -381,14 +447,28 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         ) {
             return Ok(stored.view);
         }
-        let command_id = stored
-            .command
-            .as_ref()
-            .map(|command| command.command_id.as_str())
-            .ok_or_else(|| TaskRuntimeError::PendingCommandNotFound {
-                run_id: run_id.into(),
-            })?;
-        let command_view = self.station.reconcile_command(command_id, now_ms)?;
+        let (command, grant) = match (&stored.command, &stored.grant) {
+            (Some(command), Some(grant)) => (command.clone(), grant.clone()),
+            _ => {
+                return Err(TaskRuntimeError::PendingCommandNotFound {
+                    run_id: run_id.into(),
+                })
+            }
+        };
+        let command_view = match self.station.resume_command(command, &grant, now_ms) {
+            Ok(command_view) => command_view,
+            Err(
+                RuntimeError::StaleState { .. }
+                | RuntimeError::ExpiredCommand { .. }
+                | RuntimeError::Policy(PolicyError::Expired { .. }),
+            ) => {
+                stored.view.status = TaskRunStatus::Suspended;
+                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                self.save_run(&stored, now_ms)?;
+                return Ok(stored.view);
+            }
+            Err(error) => return Err(error.into()),
+        };
 
         let (status, event_type) = match command_view.status {
             CommandStatus::Succeeded => (TaskRunStatus::Completed, TaskEventType::RunReconciled),
@@ -399,15 +479,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         };
         stored.view.status = status;
         stored.view.command = Some(command_view);
-        if stored
-            .view
-            .events
-            .last()
-            .map(|event| event.event_type != event_type)
-            .unwrap_or(true)
-        {
-            append_event(&mut stored.view, event_type, now_ms);
-        }
+        append_event_once(&mut stored.view, event_type, now_ms);
         self.save_run(&stored, now_ms)?;
         Ok(stored.view)
     }
@@ -452,7 +524,14 @@ fn command_for(
     run_id: &str,
     expires_at_ms: u64,
 ) -> Result<DeviceCommand, TaskRuntimeError> {
-    let action = action_for_goal(&stored.spec.goal);
+    let step = stored
+        .spec
+        .steps
+        .first()
+        .ok_or(TaskRuntimeError::InvalidTaskSpec {
+            reason: "at least one planned step is required",
+        })?;
+    let action = step.action.clone();
     let expected_state_version =
         stored
             .expected_state_version
@@ -461,23 +540,45 @@ fn command_for(
             })?;
     Ok(DeviceCommand {
         schema_version: SCHEMA_VERSION,
-        command_id: format!("cmd-{run_id}-desk-1"),
+        command_id: format!("cmd-{run_id}-{}", step.step_id),
         task_run_id: run_id.into(),
         action,
         expected_state_version,
-        idempotency_key: format!("{run_id}:desk:step-1"),
+        idempotency_key: format!("{run_id}:{}", step.step_id),
         expires_at_ms,
         trace_id: format!("trace-{run_id}"),
-        policy_grant_id: format!("grant-{run_id}-desk-1"),
+        policy_grant_id: format!("grant-{run_id}-{}", step.step_id),
     })
 }
 
-fn action_for_goal(goal: &TaskGoal) -> DeviceAction {
-    match goal {
-        TaskGoal::PrepareFocusSession { desk_height_mm } => DeviceAction::DeskMoveToHeight {
-            height_mm: *desk_height_mm,
-        },
+fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
+    if spec.schema_version != SCHEMA_VERSION {
+        return Err(TaskRuntimeError::UnsupportedTaskSchemaVersion {
+            expected: SCHEMA_VERSION,
+            actual: spec.schema_version,
+        });
     }
+    if spec.task_id.trim().is_empty() {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "taskId must not be empty",
+        });
+    }
+    if spec.requested_by.trim().is_empty() {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "requestedBy must not be empty",
+        });
+    }
+    if spec.steps.len() != 1 {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "the current runtime requires exactly one planned step",
+        });
+    }
+    if spec.steps[0].step_id.trim().is_empty() {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "stepId must not be empty",
+        });
+    }
+    Ok(())
 }
 
 fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
@@ -491,4 +592,15 @@ fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
         event_type,
         at_ms,
     });
+}
+
+fn append_event_once(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
+    if view
+        .events
+        .last()
+        .map(|event| event.event_type != event_type)
+        .unwrap_or(true)
+    {
+        append_event(view, event_type, at_ms);
+    }
 }

@@ -1,6 +1,76 @@
 use device_sim::{NextFault, SqliteSimulator};
+use ergopilot_protocol::{DeviceAction, WorkstationSnapshot};
 use policy_core::PolicyAuthority;
-use task_runtime::{TaskGoal, TaskRunStatus, TaskRuntime, TaskSpec};
+use station_core::{DeviceAdapter, DeviceError, DeviceExecution};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use task_runtime::{TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
+
+struct CrashBeforeStationJournal {
+    simulator: SqliteSimulator,
+    snapshot_calls: usize,
+}
+
+struct ReadbackFailureDevice {
+    snapshot: WorkstationSnapshot,
+    fail_next_snapshot: bool,
+}
+
+impl ReadbackFailureDevice {
+    fn new() -> Self {
+        Self {
+            snapshot: WorkstationSnapshot {
+                schema_version: ergopilot_protocol::SCHEMA_VERSION,
+                station_id: "station-readback-failure".into(),
+                state_version: 1,
+                observed_at_ms: 0,
+                desk_height_mm: 720,
+                movement_count: 0,
+            },
+            fail_next_snapshot: false,
+        }
+    }
+}
+
+impl DeviceAdapter for ReadbackFailureDevice {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        if std::mem::take(&mut self.fail_next_snapshot) {
+            return Err(DeviceError::new("post-effect readback unavailable"));
+        }
+        self.snapshot.observed_at_ms = observed_at_ms;
+        Ok(self.snapshot.clone())
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        assert_eq!(self.snapshot.state_version, expected_state_version);
+        self.snapshot.desk_height_mm = action.target_height_mm();
+        self.snapshot.state_version += 1;
+        self.snapshot.movement_count += 1;
+        self.fail_next_snapshot = true;
+        Ok(DeviceExecution::Reported)
+    }
+}
+
+impl DeviceAdapter for CrashBeforeStationJournal {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        self.snapshot_calls += 1;
+        if self.snapshot_calls == 2 {
+            panic!("simulated process crash before the station journal write");
+        }
+        self.simulator.snapshot(observed_at_ms)
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        self.simulator.apply(action, expected_state_version)
+    }
+}
 
 #[test]
 fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
@@ -12,13 +82,7 @@ fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
     let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
     let awaiting = first_process
         .start(
-            TaskSpec {
-                task_id: "task-recovery-1".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 790,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-recovery-1", "user-1", 790),
             1_000,
         )
         .unwrap();
@@ -37,6 +101,148 @@ fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
     assert_eq!(
         recovered.events.last().unwrap().event_type.as_str(),
         "run_reconciled"
+    );
+}
+
+#[test]
+fn failed_post_effect_readback_keeps_the_task_uncertain_until_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let mut runtime =
+        TaskRuntime::open(&database, ReadbackFailureDevice::new(), authority).unwrap();
+    let awaiting = runtime
+        .start(
+            TaskSpec::prepare_focus_session("task-readback-failure", "user-1", 790),
+            1_000,
+        )
+        .unwrap();
+
+    let uncertain = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+
+    assert_eq!(uncertain.status, TaskRunStatus::OutcomeUnknown);
+    let recovered = runtime.reconcile(&awaiting.run_id, 1_200).unwrap();
+    assert_eq!(recovered.status, TaskRunStatus::Completed);
+    assert_eq!(runtime.station_snapshot(1_201).unwrap().movement_count, 1);
+}
+
+#[test]
+fn restart_dispatches_a_persisted_intent_if_the_station_journal_is_still_empty() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let crashing_device = CrashBeforeStationJournal {
+        simulator,
+        snapshot_calls: 0,
+    };
+    let authority = policy_authority();
+    let mut first_process =
+        TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-recovery-before-journal", "user-1", 780),
+            1_000,
+        )
+        .unwrap();
+
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        first_process
+            .approve(&awaiting.run_id, "user-1", 1_100)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(first_process);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let recovered = restarted.reconcile(&awaiting.run_id, 1_200).unwrap();
+
+    assert_eq!(recovered.status, TaskRunStatus::Completed);
+    assert_eq!(restarted.station_snapshot(1_201).unwrap().movement_count, 1);
+}
+
+#[test]
+fn expired_pre_dispatch_intent_suspends_without_moving_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let crashing_device = CrashBeforeStationJournal {
+        simulator,
+        snapshot_calls: 0,
+    };
+    let authority = policy_authority();
+    let mut first_process =
+        TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-recovery-expired-intent", "user-1", 780),
+            1_000,
+        )
+        .unwrap();
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        first_process
+            .approve(&awaiting.run_id, "user-1", 1_100)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(first_process);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let recovered = restarted.reconcile(&awaiting.run_id, 70_000).unwrap();
+
+    assert_eq!(recovered.status, TaskRunStatus::Suspended);
+    assert_eq!(
+        restarted.station_snapshot(70_001).unwrap().movement_count,
+        0
+    );
+}
+
+#[test]
+fn restart_adopts_a_terminal_station_result_after_the_task_result_save_fails() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let authority = policy_authority();
+    let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-recovery-after-terminal", "user-1", 800),
+            1_000,
+        )
+        .unwrap();
+    let fault_connection = rusqlite::Connection::open(&database).unwrap();
+    fault_connection
+        .execute_batch(
+            r#"
+            CREATE TRIGGER fail_completed_task_save
+            BEFORE UPDATE ON task_runs
+            WHEN instr(NEW.stored_json, '"status":"completed"') > 0
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated crash before task result save');
+            END;
+            "#,
+        )
+        .unwrap();
+
+    let error = first_process
+        .approve(&awaiting.run_id, "user-1", 1_100)
+        .unwrap_err();
+    assert!(matches!(error, TaskRuntimeError::Storage(_)));
+    drop(first_process);
+    fault_connection
+        .execute_batch("DROP TRIGGER fail_completed_task_save;")
+        .unwrap();
+    drop(fault_connection);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let recovered = restarted.reconcile(&awaiting.run_id, 70_000).unwrap();
+
+    assert_eq!(recovered.status, TaskRunStatus::Completed);
+    assert_eq!(
+        restarted.station_snapshot(70_001).unwrap().movement_count,
+        1
     );
 }
 

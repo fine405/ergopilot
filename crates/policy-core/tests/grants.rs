@@ -19,6 +19,7 @@ fn authority_refuses_an_empty_grant_validity_window() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 1_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -44,6 +45,7 @@ fn authority_issues_a_grant_the_station_verifier_accepts() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -66,6 +68,7 @@ fn expired_grant_cannot_authorize_a_command() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 1_100,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -96,6 +99,7 @@ fn grant_cannot_be_reused_for_a_different_action() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -112,6 +116,69 @@ fn grant_cannot_be_reused_for_a_different_action() {
 }
 
 #[test]
+fn grant_cannot_be_reused_with_a_different_state_precondition() {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let mut command = command();
+    let grant = authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
+            issued_at_ms: 1_000,
+            expires_at_ms: 2_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap();
+    command.expected_state_version += 1;
+
+    let error = authority
+        .verifier()
+        .verify(&grant, &command, 1_100)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        PolicyError::ClaimMismatch {
+            claim: "expected_state_version"
+        }
+    );
+}
+
+#[test]
+fn unsupported_grant_schema_is_rejected() {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let command = command();
+    let mut grant = authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
+            issued_at_ms: 1_000,
+            expires_at_ms: 2_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap();
+    grant.schema_version = SCHEMA_VERSION + 1;
+
+    let error = authority
+        .verifier()
+        .verify(&grant, &command, 1_100)
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        PolicyError::UnsupportedSchemaVersion {
+            expected: SCHEMA_VERSION,
+            actual: SCHEMA_VERSION + 1
+        }
+    );
+}
+
+#[test]
 fn grant_cannot_be_replayed_by_a_different_command() {
     let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
     let mut command = command();
@@ -121,6 +188,7 @@ fn grant_cannot_be_replayed_by_a_different_command() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -151,6 +219,7 @@ fn grant_cannot_cross_task_run_boundaries() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -181,6 +250,7 @@ fn command_must_reference_the_exact_signed_grant() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -206,6 +276,7 @@ fn grant_is_not_valid_before_its_issue_time() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_200,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],
@@ -236,6 +307,7 @@ fn modified_signed_claims_are_rejected() {
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],

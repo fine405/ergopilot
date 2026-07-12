@@ -36,15 +36,19 @@ currently implement:
 - a versioned `DeviceCommand` protocol;
 - a narrow Rust device-adapter boundary;
 - SQLite command journaling and an SQLite-backed desk simulator;
-- HMAC-signed policy grants bound to one task, command and exact action;
+- HMAC-signed policy grants bound to one task, command, exact action and state
+  precondition;
 - grant issue/expiry checks, weak-key rejection and station-side verification;
 - deterministic `deny` and `require_approval` policy decisions;
 - durable task runs, approval ownership/expiry and ordered task timelines;
+- a versioned planner-to-runtime `TaskSpec` contract with goal, constraints,
+  assumptions and typed steps;
 - safe-envelope and stale-state checks at both policy and device seams;
 - persist-before-effect execution and read-after-write verification;
 - idempotent replay without a second physical effect;
 - fault injection for “effect happened, acknowledgement was lost”;
-- restart reconciliation with an ordered command-event timeline.
+- restart reconciliation across both sides of dispatch, including “task intent
+  saved before station journal” and “station finished before task result save”.
 
 Run the complete scenario from the repository root:
 

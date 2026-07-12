@@ -50,6 +50,7 @@ pub struct PolicyGrant {
     pub task_run_id: String,
     pub command_id: String,
     pub action: DeviceAction,
+    pub expected_state_version: u64,
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
     pub rule_ids: Vec<String>,

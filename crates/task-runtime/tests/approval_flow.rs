@@ -1,10 +1,8 @@
 use device_sim::SqliteSimulator;
-use ergopilot_protocol::{CommandStatus, DeviceAction, PolicyOutcome};
+use ergopilot_protocol::{CommandStatus, DeviceAction, PolicyOutcome, SCHEMA_VERSION};
 use policy_core::PolicyAuthority;
 use station_core::DeviceAdapter;
-use task_runtime::{
-    ApprovalStatus, TaskGoal, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec,
-};
+use task_runtime::{ApprovalStatus, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
 
 #[test]
 fn desk_motion_waits_for_approval_without_moving_the_device() {
@@ -12,13 +10,7 @@ fn desk_motion_waits_for_approval_without_moving_the_device() {
     let database = directory.path().join("station.sqlite");
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
-    let spec = TaskSpec {
-        task_id: "task-focus-1".into(),
-        requested_by: "user-1".into(),
-        goal: TaskGoal::PrepareFocusSession {
-            desk_height_mm: 760,
-        },
-    };
+    let spec = TaskSpec::prepare_focus_session("task-focus-1", "user-1", 760);
 
     let run = runtime.start(spec, 1_000).unwrap();
 
@@ -33,13 +25,7 @@ fn approval_resumes_the_same_run_and_completes_the_device_action() {
     let database = directory.path().join("station.sqlite");
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
-    let spec = TaskSpec {
-        task_id: "task-focus-2".into(),
-        requested_by: "user-1".into(),
-        goal: TaskGoal::PrepareFocusSession {
-            desk_height_mm: 760,
-        },
-    };
+    let spec = TaskSpec::prepare_focus_session("task-focus-2", "user-1", 760);
     let awaiting = runtime.start(spec, 1_000).unwrap();
 
     let completed = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
@@ -71,13 +57,7 @@ fn expired_approval_cannot_authorize_device_motion() {
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let awaiting = runtime
         .start(
-            TaskSpec {
-                task_id: "task-focus-expired".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 760,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-expired", "user-1", 760),
             1_000,
         )
         .unwrap();
@@ -120,13 +100,7 @@ fn pending_approval_survives_restart_and_duplicate_approval_does_not_move_twice(
     let mut first_process = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let awaiting = first_process
         .start(
-            TaskSpec {
-                task_id: "task-focus-restart".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 780,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-restart", "user-1", 780),
             1_000,
         )
         .unwrap();
@@ -159,13 +133,7 @@ fn completed_run_exposes_an_ordered_approval_and_execution_timeline() {
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let awaiting = runtime
         .start(
-            TaskSpec {
-                task_id: "task-focus-timeline".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 760,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-timeline", "user-1", 760),
             1_000,
         )
         .unwrap();
@@ -199,13 +167,7 @@ fn restarting_the_same_task_returns_its_existing_completed_run() {
     let database = directory.path().join("station.sqlite");
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
-    let spec = TaskSpec {
-        task_id: "task-focus-idempotent".into(),
-        requested_by: "user-1".into(),
-        goal: TaskGoal::PrepareFocusSession {
-            desk_height_mm: 760,
-        },
-    };
+    let spec = TaskSpec::prepare_focus_session("task-focus-idempotent", "user-1", 760);
     let awaiting = runtime.start(spec.clone(), 1_000).unwrap();
     runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
 
@@ -223,13 +185,7 @@ fn a_different_user_cannot_approve_the_requesters_motion_task() {
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let awaiting = runtime
         .start(
-            TaskSpec {
-                task_id: "task-focus-owner".into(),
-                requested_by: "user-owner".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 760,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-owner", "user-owner", 760),
             1_000,
         )
         .unwrap();
@@ -257,13 +213,7 @@ fn unsafe_motion_is_denied_without_creating_an_approval() {
 
     let denied = runtime
         .start(
-            TaskSpec {
-                task_id: "task-focus-unsafe".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 1_400,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-unsafe", "user-1", 1_400),
             1_000,
         )
         .unwrap();
@@ -286,13 +236,7 @@ fn state_change_while_waiting_for_approval_suspends_the_old_plan() {
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let awaiting = runtime
         .start(
-            TaskSpec {
-                task_id: "task-focus-stale".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 780,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-focus-stale", "user-1", 780),
             1_000,
         )
         .unwrap();
@@ -315,4 +259,40 @@ fn state_change_while_waiting_for_approval_suspends_the_old_plan() {
     let final_state = runtime.station_snapshot(1_101).unwrap();
     assert_eq!(final_state.desk_height_mm, 740);
     assert_eq!(final_state.movement_count, 1);
+}
+
+#[test]
+fn unsupported_task_schema_is_rejected_before_a_run_is_created() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let mut spec = TaskSpec::prepare_focus_session("task-future-schema", "user-1", 760);
+    spec.schema_version = SCHEMA_VERSION + 1;
+
+    let error = runtime.start(spec, 1_000).unwrap_err();
+
+    assert!(matches!(
+        error,
+        TaskRuntimeError::UnsupportedTaskSchemaVersion {
+            expected: SCHEMA_VERSION,
+            actual
+        } if actual == SCHEMA_VERSION + 1
+    ));
+    assert_eq!(runtime.station_snapshot(1_001).unwrap().movement_count, 0);
+}
+
+#[test]
+fn task_without_a_planned_step_is_rejected_before_policy_evaluation() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let mut spec = TaskSpec::prepare_focus_session("task-empty-plan", "user-1", 760);
+    spec.steps.clear();
+
+    let error = runtime.start(spec, 1_000).unwrap_err();
+
+    assert!(matches!(error, TaskRuntimeError::InvalidTaskSpec { .. }));
+    assert_eq!(runtime.station_snapshot(1_001).unwrap().movement_count, 0);
 }

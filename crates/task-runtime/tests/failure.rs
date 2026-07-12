@@ -1,7 +1,7 @@
 use ergopilot_protocol::{DeviceAction, WorkstationSnapshot, SCHEMA_VERSION};
 use policy_core::PolicyAuthority;
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution};
-use task_runtime::{TaskGoal, TaskRunStatus, TaskRuntime, TaskSpec};
+use task_runtime::{TaskRunStatus, TaskRuntime, TaskSpec};
 
 struct UnavailableDevice;
 
@@ -50,13 +50,7 @@ fn definite_device_failure_is_persisted_on_the_task_run() {
     let mut runtime = TaskRuntime::open(&database, UnavailableDevice, authority).unwrap();
     let awaiting = runtime
         .start(
-            TaskSpec {
-                task_id: "task-device-failure".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 760,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-device-failure", "user-1", 760),
             1_000,
         )
         .unwrap();
@@ -80,13 +74,7 @@ fn deterministic_policy_can_deny_unsafe_input_while_the_device_is_offline() {
 
     let denied = runtime
         .start(
-            TaskSpec {
-                task_id: "task-offline-deny".into(),
-                requested_by: "user-1".into(),
-                goal: TaskGoal::PrepareFocusSession {
-                    desk_height_mm: 1_400,
-                },
-            },
+            TaskSpec::prepare_focus_session("task-offline-deny", "user-1", 1_400),
             1_000,
         )
         .unwrap();

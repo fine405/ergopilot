@@ -45,7 +45,8 @@ The project is designed to prove the following abilities:
 
 The first vertical slice must work without an LLM.
 
-1. A hard-coded `TaskSpec` requests a desk-height change and lumbar adjustment.
+1. A hard-coded `TaskSpec` requests a desk-height change; lumbar adjustment is
+   added after this first one-action reliability slice.
 2. The policy engine requires approval for the desk motion.
 3. An approval resumes the run.
 4. The command reaches the Rust simulator with an idempotency key and expected
@@ -212,6 +213,11 @@ type TaskSpec = {
   assumptions: string[]
   steps: PlannedStep[]
 }
+
+type PlannedStep = {
+  stepId: string
+  action: DeviceAction
+}
 ```
 
 The Mastra planner returns only this shape. Schema validation happens before a
@@ -243,6 +249,7 @@ type PolicyGrant = {
   taskRunId: string
   commandId: string
   action: DeviceAction
+  expectedStateVersion: number
   issuedAtMs: number
   expiresAtMs: number
   ruleIds: string[]
@@ -252,9 +259,11 @@ type PolicyGrant = {
 
 The local slice uses a shared HMAC trust key behind separate issuer and
 verifier-only interfaces; the station has no unsigned execution entry point. It
-validates signature, validity window, grant ID, task run, command and exact
-action before any side effect. A remote control-plane boundary should replace
-this local shared-secret model with asymmetric verification and key rotation.
+validates schema, signature, validity window, grant ID, task run, command, exact
+action and expected state version before any new side effect. Exact replays read
+the previously stored outcome even after authorization expiry; they cannot
+repeat the effect. A remote control-plane boundary should replace this local
+shared-secret model with asymmetric verification and key rotation.
 
 ### 5.5 Command event
 
@@ -361,9 +370,11 @@ stateDiagram-v2
 ### 7.1 Invariants
 
 These are target invariants for the complete MVP. The current local slice now
-enforces grant authenticity, validity, task/command/action scope, approval
-ownership and expiry, task idempotency, stale-plan suspension and task-level
-reconciliation. Cancellation and compensation remain future slices.
+enforces TaskSpec validation, grant authenticity, validity,
+task/command/action/state-precondition scope, approval ownership and expiry,
+task idempotency, stale-plan suspension and task-level reconciliation across
+both dispatch crash windows. Cancellation and compensation remain future
+slices.
 
 1. Every device command belongs to an existing task run.
 2. Every action command carries a non-expired policy grant.

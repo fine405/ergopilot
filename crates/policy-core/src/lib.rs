@@ -15,6 +15,7 @@ pub struct GrantRequest {
     pub task_run_id: String,
     pub command_id: String,
     pub action: DeviceAction,
+    pub expected_state_version: u64,
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
     pub rule_ids: Vec<String>,
@@ -36,6 +37,10 @@ pub enum PolicyError {
     Serialization(String),
     #[error("policy grant signature is invalid")]
     InvalidSignature,
+    #[error(
+        "unsupported policy grant schema version {actual}; this verifier accepts version {expected}"
+    )]
+    UnsupportedSchemaVersion { expected: u16, actual: u16 },
     #[error("policy grant expired at {expires_at_ms}, current time is {now_ms}")]
     Expired { expires_at_ms: u64, now_ms: u64 },
     #[error("policy grant is not valid until {issued_at_ms}, current time is {now_ms}")]
@@ -101,6 +106,7 @@ impl PolicyAuthority {
             task_run_id: request.task_run_id,
             command_id: request.command_id,
             action: request.action,
+            expected_state_version: request.expected_state_version,
             issued_at_ms: request.issued_at_ms,
             expires_at_ms: request.expires_at_ms,
             rule_ids: request.rule_ids,
@@ -122,6 +128,12 @@ impl PolicyVerifier {
         command: &DeviceCommand,
         now_ms: u64,
     ) -> Result<(), PolicyError> {
+        if grant.schema_version != SCHEMA_VERSION {
+            return Err(PolicyError::UnsupportedSchemaVersion {
+                expected: SCHEMA_VERSION,
+                actual: grant.schema_version,
+            });
+        }
         let payload = signing_payload(grant)?;
         let signature = hex::decode(&grant.signature).map_err(|_| PolicyError::InvalidSignature)?;
         let mut mac =
@@ -157,6 +169,11 @@ impl PolicyVerifier {
         if grant.action != command.action {
             return Err(PolicyError::ClaimMismatch { claim: "action" });
         }
+        if grant.expected_state_version != command.expected_state_version {
+            return Err(PolicyError::ClaimMismatch {
+                claim: "expected_state_version",
+            });
+        }
         Ok(())
     }
 }
@@ -169,6 +186,7 @@ struct SigningPayload<'a> {
     task_run_id: &'a str,
     command_id: &'a str,
     action: &'a DeviceAction,
+    expected_state_version: u64,
     issued_at_ms: u64,
     expires_at_ms: u64,
     rule_ids: &'a [String],
@@ -181,6 +199,7 @@ fn signing_payload(grant: &PolicyGrant) -> Result<Vec<u8>, PolicyError> {
         task_run_id: &grant.task_run_id,
         command_id: &grant.command_id,
         action: &grant.action,
+        expected_state_version: grant.expected_state_version,
         issued_at_ms: grant.issued_at_ms,
         expires_at_ms: grant.expires_at_ms,
         rule_ids: &grant.rule_ids,

@@ -107,6 +107,7 @@ fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGran
             task_run_id: command.task_run_id.clone(),
             command_id: command.command_id.clone(),
             action: command.action.clone(),
+            expected_state_version: command.expected_state_version,
             issued_at_ms: 900,
             expires_at_ms: 2_000,
             rule_ids: vec!["desk.motion.requires_approval".into()],

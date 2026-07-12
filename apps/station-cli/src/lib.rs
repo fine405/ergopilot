@@ -10,7 +10,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
-use task_runtime::{TaskGoal, TaskRunStatus, TaskRunView, TaskRuntime, TaskRuntimeError, TaskSpec};
+use task_runtime::{TaskRunStatus, TaskRunView, TaskRuntime, TaskRuntimeError, TaskSpec};
 use thiserror::Error;
 
 const DEMO_MARKER_CONTENT: &[u8] = b"ergopilot-station-cli-demo-v1\n";
@@ -64,13 +64,7 @@ pub fn run_approval_demo(
     let simulator = SqliteSimulator::open(database_path)?;
     let mut first_process = TaskRuntime::open(database_path, simulator, authority.clone())?;
     let awaiting = first_process.start(
-        TaskSpec {
-            task_id: "focus-session-demo".into(),
-            requested_by: "demo-user".into(),
-            goal: TaskGoal::PrepareFocusSession {
-                desk_height_mm: 780,
-            },
-        },
+        TaskSpec::prepare_focus_session("focus-session-demo", "demo-user", 780),
         1_000,
     )?;
     writeln!(output, "\n[task created] status={:?}", awaiting.status)?;
@@ -229,6 +223,7 @@ fn grant_for(
         task_run_id: command.task_run_id.clone(),
         command_id: command.command_id.clone(),
         action: command.action.clone(),
+        expected_state_version: command.expected_state_version,
         issued_at_ms,
         expires_at_ms: command.expires_at_ms,
         rule_ids: vec!["desk.motion.requires_approval".into()],
