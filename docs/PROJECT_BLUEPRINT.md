@@ -1,6 +1,7 @@
 # ErgoPilot project blueprint
 
-Status: implementation in progress; local command/recovery tracer bullet runs
+Status: implementation in progress; local command/recovery and policy/approval
+tracer bullets run
 
 Assumed portfolio schedule: 4–6 weeks
 
@@ -235,7 +236,25 @@ type DeviceCommand = {
   traceId: string
   policyGrantId: string
 }
+
+type PolicyGrant = {
+  schemaVersion: 1
+  grantId: string
+  taskRunId: string
+  commandId: string
+  action: DeviceAction
+  issuedAtMs: number
+  expiresAtMs: number
+  ruleIds: string[]
+  signature: string
+}
 ```
+
+The local slice uses a shared HMAC trust key behind separate issuer and
+verifier-only interfaces; the station has no unsigned execution entry point. It
+validates signature, validity window, grant ID, task run, command and exact
+action before any side effect. A remote control-plane boundary should replace
+this local shared-secret model with asymmetric verification and key rotation.
 
 ### 5.5 Command event
 
@@ -265,16 +284,15 @@ rather than entering the journal as arbitrary strings.
 ### 5.6 Policy decision
 
 ```ts
-type PolicyDecision =
-  | { outcome: 'allow'; grantId: string; ruleIds: string[] }
-  | {
-      outcome: 'require_approval'
-      approvalId: string
-      expiresAt: string
-      ruleIds: string[]
-    }
-  | { outcome: 'deny'; ruleIds: string[]; reasonCode: string }
+type PolicyDecision = {
+  outcome: 'allow' | 'require_approval' | 'deny'
+  ruleIds: string[]
+  reasonCode?: string
+}
 ```
+
+Approval identity, expiry and status are durable fields on `TaskRunView`; a
+policy decision is evidence for why a run was allowed, paused or denied.
 
 ## 6. Deep module interfaces
 
@@ -302,9 +320,10 @@ The orchestration layer exposes another small interface:
 ```ts
 interface TaskRuntime {
   start(task: TaskSpec): Promise<TaskRun>
-  signal(runId: string, signal: RunSignal): Promise<void>
-  cancel(runId: string, requestedBy: string): Promise<void>
+  approve(runId: string, approvedBy: string, nowMs: number): Promise<TaskRunView>
+  reconcile(runId: string, nowMs: number): Promise<TaskRunView>
   inspect(runId: string): Promise<TaskRunView>
+  stationSnapshot(observedAtMs: number): Promise<WorkstationSnapshot>
 }
 ```
 
@@ -318,6 +337,7 @@ stateDiagram-v2
     planned --> policy_checked
     policy_checked --> awaiting_approval
     policy_checked --> dispatched
+    policy_checked --> denied
     awaiting_approval --> dispatched
     awaiting_approval --> cancelled
     dispatched --> executing
@@ -332,6 +352,7 @@ stateDiagram-v2
     compensating --> failed
     suspended --> dispatched
     suspended --> cancelled
+    denied --> [*]
     completed --> [*]
     failed --> [*]
     cancelled --> [*]
@@ -339,10 +360,10 @@ stateDiagram-v2
 
 ### 7.1 Invariants
 
-These are target invariants for the complete MVP. The current local slice
-enforces command expiry and the presence of a grant identifier; grant
-authenticity, action scope and grant expiry are delivered by the next policy
-slice.
+These are target invariants for the complete MVP. The current local slice now
+enforces grant authenticity, validity, task/command/action scope, approval
+ownership and expiry, task idempotency, stale-plan suspension and task-level
+reconciliation. Cancellation and compensation remain future slices.
 
 1. Every device command belongs to an existing task run.
 2. Every action command carries a non-expired policy grant.
@@ -455,11 +476,15 @@ their existing authoritative systems.
 ```text
 ergopilot/
 ├── apps/
+│   ├── station-cli/         # executable recovery and approval demos
 │   ├── console/             # TanStack Start web console
 │   ├── control-plane/       # Hono, Mastra, Workers, Workflows and DO
 │   └── station/             # Tauri application
 ├── crates/
-│   ├── station-core/        # state machine, policy enforcement and journal
+│   ├── ergopilot-protocol/  # versioned cross-runtime JSON types
+│   ├── policy-core/         # decisions, grant signing and verification
+│   ├── task-runtime/        # durable task/approval state and recovery
+│   ├── station-core/        # device command state machine and journal
 │   ├── device-sim/          # deterministic simulator
 │   └── device-mqtt/         # later adapter
 ├── packages/

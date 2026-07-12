@@ -1,6 +1,8 @@
 use ergopilot_protocol::{
-    CommandStatus, DeviceAction, DeviceCommand, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyGrant, WorkstationSnapshot,
+    SCHEMA_VERSION,
 };
+use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution, RuntimeError, StationRuntime};
 
 struct TestDevice {
@@ -106,11 +108,40 @@ fn desk_command() -> DeviceCommand {
     }
 }
 
+fn test_runtime<D: DeviceAdapter>(device: D) -> StationRuntime<D> {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    StationRuntime::in_memory(device, authority.verifier()).unwrap()
+}
+
+fn grant_for(command: &DeviceCommand, now_ms: u64) -> PolicyGrant {
+    PolicyAuthority::new(b"ergopilot-test-policy-key")
+        .unwrap()
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            issued_at_ms: now_ms,
+            expires_at_ms: now_ms + 100_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap()
+}
+
+fn execute<D: DeviceAdapter>(
+    runtime: &mut StationRuntime<D>,
+    command: DeviceCommand,
+    now_ms: u64,
+) -> Result<CommandView, RuntimeError> {
+    let grant = grant_for(&command, now_ms);
+    runtime.execute(command, &grant, now_ms)
+}
+
 #[test]
 fn desk_move_is_successful_only_after_the_observed_height_matches() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
 
-    let result = runtime.execute(desk_command(), 1_000).unwrap();
+    let result = execute(&mut runtime, desk_command(), 1_000).unwrap();
 
     assert_eq!(result.status, CommandStatus::Succeeded);
     assert_eq!(result.outcome.unwrap().desk_height_mm, 760);
@@ -119,11 +150,11 @@ fn desk_move_is_successful_only_after_the_observed_height_matches() {
 
 #[test]
 fn duplicate_delivery_replays_the_existing_result_without_moving_again() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let command = desk_command();
 
-    let first = runtime.execute(command.clone(), 1_000).unwrap();
-    let replay = runtime.execute(command, 1_100).unwrap();
+    let first = execute(&mut runtime, command.clone(), 1_000).unwrap();
+    let replay = execute(&mut runtime, command, 1_100).unwrap();
 
     assert_eq!(first.status, CommandStatus::Succeeded);
     assert_eq!(replay.status, CommandStatus::Succeeded);
@@ -133,11 +164,11 @@ fn duplicate_delivery_replays_the_existing_result_without_moving_again() {
 
 #[test]
 fn command_based_on_a_stale_snapshot_is_rejected_before_the_device_moves() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let mut command = desk_command();
     command.expected_state_version = 107;
 
-    let error = runtime.execute(command, 1_000).unwrap_err();
+    let error = execute(&mut runtime, command, 1_000).unwrap_err();
 
     assert!(matches!(
         error,
@@ -151,13 +182,13 @@ fn command_based_on_a_stale_snapshot_is_rejected_before_the_device_moves() {
 
 #[test]
 fn reusing_an_idempotency_key_for_a_different_intent_is_rejected() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
-    runtime.execute(desk_command(), 1_000).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
+    execute(&mut runtime, desk_command(), 1_000).unwrap();
     let mut conflicting = desk_command();
     conflicting.command_id = "cmd-desk-43".into();
     conflicting.action = DeviceAction::DeskMoveToHeight { height_mm: 800 };
 
-    let error = runtime.execute(conflicting, 1_100).unwrap_err();
+    let error = execute(&mut runtime, conflicting, 1_100).unwrap_err();
 
     assert!(matches!(
         error,
@@ -169,11 +200,11 @@ fn reusing_an_idempotency_key_for_a_different_intent_is_rejected() {
 
 #[test]
 fn desk_height_outside_the_device_envelope_is_rejected() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let mut command = desk_command();
     command.action = DeviceAction::DeskMoveToHeight { height_mm: 1_400 };
 
-    let error = runtime.execute(command, 1_000).unwrap_err();
+    let error = execute(&mut runtime, command, 1_000).unwrap_err();
 
     assert!(matches!(
         error,
@@ -188,11 +219,11 @@ fn desk_height_outside_the_device_envelope_is_rejected() {
 
 #[test]
 fn command_that_arrives_after_its_expiry_is_rejected() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let mut command = desk_command();
     command.expires_at_ms = 999;
 
-    let error = runtime.execute(command, 1_000).unwrap_err();
+    let error = execute(&mut runtime, command, 1_000).unwrap_err();
 
     assert!(matches!(
         error,
@@ -206,8 +237,8 @@ fn command_that_arrives_after_its_expiry_is_rejected() {
 
 #[test]
 fn successful_command_exposes_an_ordered_observable_timeline() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
-    runtime.execute(desk_command(), 1_000).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
+    execute(&mut runtime, desk_command(), 1_000).unwrap();
 
     let events = runtime.events("cmd-desk-42").unwrap();
     let event_types: Vec<_> = events
@@ -223,11 +254,11 @@ fn successful_command_exposes_an_ordered_observable_timeline() {
 
 #[test]
 fn action_without_a_policy_grant_is_rejected_locally() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let mut command = desk_command();
     command.policy_grant_id.clear();
 
-    let error = runtime.execute(command, 1_000).unwrap_err();
+    let error = execute(&mut runtime, command, 1_000).unwrap_err();
 
     assert!(matches!(error, RuntimeError::MissingPolicyGrant));
     assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
@@ -235,11 +266,11 @@ fn action_without_a_policy_grant_is_rejected_locally() {
 
 #[test]
 fn unsupported_command_schema_is_rejected_before_the_device_moves() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::new()).unwrap();
+    let mut runtime = test_runtime(TestDevice::new());
     let mut command = desk_command();
     command.schema_version = SCHEMA_VERSION + 1;
 
-    let error = runtime.execute(command, 1_000).unwrap_err();
+    let error = execute(&mut runtime, command, 1_000).unwrap_err();
 
     assert!(matches!(
         error,
@@ -253,10 +284,10 @@ fn unsupported_command_schema_is_rejected_before_the_device_moves() {
 
 #[test]
 fn definite_device_failure_becomes_terminal_and_observable() {
-    let mut runtime = StationRuntime::in_memory(TestDevice::unavailable()).unwrap();
+    let mut runtime = test_runtime(TestDevice::unavailable());
     let command = desk_command();
 
-    let error = runtime.execute(command.clone(), 1_000).unwrap_err();
+    let error = execute(&mut runtime, command.clone(), 1_000).unwrap_err();
     assert!(matches!(error, RuntimeError::Device(_)));
 
     let events = runtime.events(&command.command_id).unwrap();
@@ -266,7 +297,7 @@ fn definite_device_failure_becomes_terminal_and_observable() {
         .collect();
     assert_eq!(event_types, ["accepted", "executing", "execution_failed"]);
 
-    let replay = runtime.execute(command, 1_100).unwrap();
+    let replay = execute(&mut runtime, command, 1_100).unwrap();
     assert_eq!(replay.status, CommandStatus::Failed);
     assert!(replay.was_replayed);
     assert_eq!(runtime.snapshot(1_101).unwrap().movement_count, 0);
@@ -274,13 +305,13 @@ fn definite_device_failure_becomes_terminal_and_observable() {
 
 #[test]
 fn failed_post_effect_readback_is_recorded_as_uncertain_then_reconciled() {
-    let mut runtime = StationRuntime::in_memory(ReadbackFailureDevice::new()).unwrap();
+    let mut runtime = test_runtime(ReadbackFailureDevice::new());
     let command = desk_command();
 
-    let error = runtime.execute(command.clone(), 1_000).unwrap_err();
+    let error = execute(&mut runtime, command.clone(), 1_000).unwrap_err();
     assert!(matches!(error, RuntimeError::Device(_)));
 
-    let replay = runtime.execute(command.clone(), 1_050).unwrap();
+    let replay = execute(&mut runtime, command.clone(), 1_050).unwrap();
     assert_eq!(replay.status, CommandStatus::OutcomeUnknown);
     let recovered = runtime.reconcile_pending(1_100).unwrap();
     assert_eq!(recovered[0].status, CommandStatus::Succeeded);
@@ -301,4 +332,33 @@ fn failed_post_effect_readback_is_recorded_as_uncertain_then_reconciled() {
             "reconciled_succeeded"
         ]
     );
+}
+
+#[test]
+fn expired_signed_grant_is_rejected_before_the_device_moves() {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let mut runtime = StationRuntime::in_memory(TestDevice::new(), authority.verifier()).unwrap();
+    let command = desk_command();
+    let grant = authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            issued_at_ms: 900,
+            expires_at_ms: 1_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap();
+
+    let error = runtime.execute(command, &grant, 1_000).unwrap_err();
+
+    assert!(matches!(
+        error,
+        RuntimeError::Policy(PolicyError::Expired {
+            expires_at_ms: 1_000,
+            now_ms: 1_000
+        })
+    ));
+    assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
 }

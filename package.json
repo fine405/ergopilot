@@ -5,6 +5,7 @@
   "scripts": {
     "check": "cargo check --workspace",
     "demo": "cargo run -p station-cli -- target/ergopilot-demo.sqlite",
+    "demo:approval": "cargo run -p station-cli -- --approval target/ergopilot-approval-demo.sqlite",
     "format": "cargo fmt --all --check",
     "lint": "cargo clippy --workspace --all-targets -- -D warnings",
     "test": "cargo test --workspace"

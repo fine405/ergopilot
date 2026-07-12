@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const SCHEMA_VERSION: u16 = 1;
+pub const MIN_DESK_HEIGHT_MM: u16 = 620;
+pub const MAX_DESK_HEIGHT_MM: u16 = 1_280;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "input")]
@@ -38,6 +40,36 @@ pub struct DeviceCommand {
     pub expires_at_ms: u64,
     pub trace_id: String,
     pub policy_grant_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyGrant {
+    pub schema_version: u16,
+    pub grant_id: String,
+    pub task_run_id: String,
+    pub command_id: String,
+    pub action: DeviceAction,
+    pub issued_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub rule_ids: Vec<String>,
+    pub signature: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyOutcome {
+    Allow,
+    RequireApproval,
+    Deny,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyDecision {
+    pub outcome: PolicyOutcome,
+    pub rule_ids: Vec<String>,
+    pub reason_code: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

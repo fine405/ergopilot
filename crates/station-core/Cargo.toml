@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 ergopilot-protocol = { path = "../ergopilot-protocol" }
+policy-core = { path = "../policy-core" }
 rusqlite.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

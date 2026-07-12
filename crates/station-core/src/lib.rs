@@ -1,13 +1,13 @@
 use ergopilot_protocol::{
     CommandEvent, CommandEventType, CommandStatus, CommandView, DeviceAction, DeviceCommand,
-    VerifiedOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    PolicyGrant, VerifiedOutcome, WorkstationSnapshot, SCHEMA_VERSION,
 };
+use policy_core::{PolicyError, PolicyVerifier};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::Path;
 use thiserror::Error;
 
-pub const MIN_DESK_HEIGHT_MM: u16 = 620;
-pub const MAX_DESK_HEIGHT_MM: u16 = 1_280;
+pub use ergopilot_protocol::{MAX_DESK_HEIGHT_MM, MIN_DESK_HEIGHT_MM};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceExecution {
@@ -51,10 +51,14 @@ pub enum RuntimeError {
     Device(#[from] DeviceError),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
+    #[error(transparent)]
+    Policy(#[from] PolicyError),
     #[error("command journal contains an unknown status: {0}")]
     CorruptJournal(String),
     #[error("command journal contains an unknown event type: {0}")]
     CorruptEventType(String),
+    #[error("command {command_id} is not pending reconciliation")]
+    CommandNotPending { command_id: String },
     #[error(
         "command expected workstation state version {expected}, but current version is {actual}"
     )]
@@ -77,18 +81,27 @@ pub struct StationRuntime<D> {
     #[allow(dead_code)]
     connection: Connection,
     device: D,
+    policy_verifier: PolicyVerifier,
 }
 
 impl<D: DeviceAdapter> StationRuntime<D> {
-    pub fn in_memory(device: D) -> Result<Self, RuntimeError> {
-        Self::from_connection(Connection::open_in_memory()?, device)
+    pub fn in_memory(device: D, policy_verifier: PolicyVerifier) -> Result<Self, RuntimeError> {
+        Self::from_connection(Connection::open_in_memory()?, device, policy_verifier)
     }
 
-    pub fn open(path: impl AsRef<Path>, device: D) -> Result<Self, RuntimeError> {
-        Self::from_connection(Connection::open(path)?, device)
+    pub fn open(
+        path: impl AsRef<Path>,
+        device: D,
+        policy_verifier: PolicyVerifier,
+    ) -> Result<Self, RuntimeError> {
+        Self::from_connection(Connection::open(path)?, device, policy_verifier)
     }
 
-    fn from_connection(connection: Connection, device: D) -> Result<Self, RuntimeError> {
+    fn from_connection(
+        connection: Connection,
+        device: D,
+        policy_verifier: PolicyVerifier,
+    ) -> Result<Self, RuntimeError> {
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS commands (
@@ -110,10 +123,24 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             ",
         )?;
 
-        Ok(Self { connection, device })
+        Ok(Self {
+            connection,
+            device,
+            policy_verifier,
+        })
     }
 
     pub fn execute(
+        &mut self,
+        command: DeviceCommand,
+        grant: &PolicyGrant,
+        now_ms: u64,
+    ) -> Result<CommandView, RuntimeError> {
+        self.policy_verifier.verify(grant, &command, now_ms)?;
+        self.execute_verified(command, now_ms)
+    }
+
+    fn execute_verified(
         &mut self,
         command: DeviceCommand,
         now_ms: u64,
@@ -325,59 +352,96 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         };
 
         let mut reconciled = Vec::with_capacity(pending.len());
-        for (command_id, idempotency_key, command_json, status_text) in pending {
-            let command: DeviceCommand = serde_json::from_str(&command_json)?;
-            let observed = self.device.snapshot(now_ms)?;
-
-            if observed.desk_height_mm == command.action.target_height_mm() {
-                let outcome = VerifiedOutcome {
-                    state_version: observed.state_version,
-                    desk_height_mm: observed.desk_height_mm,
-                    verified_at_ms: now_ms,
-                };
-                let outcome_json = serde_json::to_string(&outcome)?;
-                self.transition_with_event(
-                    &command_id,
-                    "succeeded",
-                    Some(&outcome_json),
-                    CommandEventType::ReconciledSucceeded,
-                    now_ms,
-                )?;
-                reconciled.push(CommandView {
-                    command_id,
-                    idempotency_key,
-                    status: CommandStatus::Succeeded,
-                    outcome: Some(outcome),
-                    was_replayed: false,
-                });
-            } else {
-                let previous_status = command_status_from_db(&status_text)?;
-                let status = if matches!(
-                    previous_status,
-                    CommandStatus::Accepted | CommandStatus::Executing
-                ) {
-                    self.transition_with_event(
-                        &command_id,
-                        "outcome_unknown",
-                        None,
-                        CommandEventType::ReconciliationPending,
-                        now_ms,
-                    )?;
-                    CommandStatus::OutcomeUnknown
-                } else {
-                    previous_status
-                };
-                reconciled.push(CommandView {
-                    command_id,
-                    idempotency_key,
-                    status,
-                    outcome: None,
-                    was_replayed: false,
-                });
-            }
+        for record in pending {
+            reconciled.push(self.reconcile_record(record, now_ms)?);
         }
 
         Ok(reconciled)
+    }
+
+    pub fn reconcile_command(
+        &mut self,
+        command_id: &str,
+        now_ms: u64,
+    ) -> Result<CommandView, RuntimeError> {
+        let record = self
+            .connection
+            .query_row(
+                "SELECT command_id, idempotency_key, command_json, status
+                 FROM commands
+                 WHERE command_id = ?1
+                   AND status IN ('accepted', 'executing', 'outcome_unknown')",
+                params![command_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| RuntimeError::CommandNotPending {
+                command_id: command_id.into(),
+            })?;
+        self.reconcile_record(record, now_ms)
+    }
+
+    fn reconcile_record(
+        &mut self,
+        (command_id, idempotency_key, command_json, status_text): (String, String, String, String),
+        now_ms: u64,
+    ) -> Result<CommandView, RuntimeError> {
+        let command: DeviceCommand = serde_json::from_str(&command_json)?;
+        let observed = self.device.snapshot(now_ms)?;
+
+        if observed.desk_height_mm == command.action.target_height_mm() {
+            let outcome = VerifiedOutcome {
+                state_version: observed.state_version,
+                desk_height_mm: observed.desk_height_mm,
+                verified_at_ms: now_ms,
+            };
+            let outcome_json = serde_json::to_string(&outcome)?;
+            self.transition_with_event(
+                &command_id,
+                "succeeded",
+                Some(&outcome_json),
+                CommandEventType::ReconciledSucceeded,
+                now_ms,
+            )?;
+            Ok(CommandView {
+                command_id,
+                idempotency_key,
+                status: CommandStatus::Succeeded,
+                outcome: Some(outcome),
+                was_replayed: false,
+            })
+        } else {
+            let previous_status = command_status_from_db(&status_text)?;
+            let status = if matches!(
+                previous_status,
+                CommandStatus::Accepted | CommandStatus::Executing
+            ) {
+                self.transition_with_event(
+                    &command_id,
+                    "outcome_unknown",
+                    None,
+                    CommandEventType::ReconciliationPending,
+                    now_ms,
+                )?;
+                CommandStatus::OutcomeUnknown
+            } else {
+                previous_status
+            };
+            Ok(CommandView {
+                command_id,
+                idempotency_key,
+                status,
+                outcome: None,
+                was_replayed: false,
+            })
+        }
     }
 
     fn persist_started(

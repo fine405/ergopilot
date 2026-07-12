@@ -30,13 +30,17 @@ The implementation plan and acceptance criteria are in
 
 ## Current status
 
-The first local-runtime tracer bullet is runnable. It currently implements:
+The local runtime and persistent approval tracer bullets are runnable. They
+currently implement:
 
 - a versioned `DeviceCommand` protocol;
 - a narrow Rust device-adapter boundary;
 - SQLite command journaling and an SQLite-backed desk simulator;
-- policy-grant identifier presence, command expiry, safe-envelope and
-  stale-state checks;
+- HMAC-signed policy grants bound to one task, command and exact action;
+- grant issue/expiry checks, weak-key rejection and station-side verification;
+- deterministic `deny` and `require_approval` policy decisions;
+- durable task runs, approval ownership/expiry and ordered task timelines;
+- safe-envelope and stale-state checks at both policy and device seams;
 - persist-before-effect execution and read-after-write verification;
 - idempotent replay without a second physical effect;
 - fault injection for “effect happened, acknowledgement was lost”;
@@ -46,6 +50,7 @@ Run the complete scenario from the repository root:
 
 ```bash
 pnpm demo
+pnpm demo:approval
 ```
 
 Run the verification suite:
@@ -56,16 +61,19 @@ pnpm check
 pnpm lint
 ```
 
-The demo intentionally has no LLM dependency: its task is fixed so that the
-execution and recovery semantics can be tested deterministically. The next
-vertical slice adds a real, expiring and action-scoped policy grant, the
-task/approval state machine and a web timeline; Mastra planning is attached only
-after those boundaries are reliable.
+The demos intentionally have no LLM dependency: their tasks are fixed so that
+execution, approval and recovery semantics can be tested deterministically. The
+next vertical slice exposes `TaskRunView` through Hono and renders its policy,
+approval and event timeline in the TanStack Start console. Mastra planning is
+attached only after that deterministic control path is reliable.
 
 Key modules:
 
 - `crates/ergopilot-protocol`: shared versioned command and event types;
+- `crates/policy-core`: deterministic decisions plus signed grant issue and
+  verification;
 - `crates/station-core`: validation, journal, execution, verification and
   reconciliation;
+- `crates/task-runtime`: durable task/approval state and task-level recovery;
 - `crates/device-sim`: persistent simulated hardware plus fault injection;
 - `apps/station-cli`: an end-to-end executable demonstration.

@@ -1,6 +1,7 @@
 use ergopilot_protocol::{
-    CommandStatus, DeviceAction, DeviceCommand, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandStatus, DeviceAction, DeviceCommand, PolicyGrant, WorkstationSnapshot, SCHEMA_VERSION,
 };
+use policy_core::{GrantRequest, PolicyAuthority};
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution, StationRuntime};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -41,15 +42,19 @@ fn restart_turns_interrupted_execution_into_an_observable_uncertain_outcome() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");
     let command = command();
-    let mut first_process = StationRuntime::open(&database, CrashBeforeEffect).unwrap();
+    let authority = policy_authority();
+    let grant = grant_for(&authority, &command);
+    let mut first_process =
+        StationRuntime::open(&database, CrashBeforeEffect, authority.verifier()).unwrap();
 
     let crashed = catch_unwind(AssertUnwindSafe(|| {
-        let _ = first_process.execute(command.clone(), 1_000);
+        let _ = first_process.execute(command.clone(), &grant, 1_000);
     }));
     assert!(crashed.is_err());
     drop(first_process);
 
-    let mut restarted = StationRuntime::open(&database, UnchangedDevice).unwrap();
+    let mut restarted =
+        StationRuntime::open(&database, UnchangedDevice, authority.verifier()).unwrap();
     let recovered = restarted.reconcile_pending(1_100).unwrap();
 
     assert_eq!(recovered.len(), 1);
@@ -89,4 +94,22 @@ fn command() -> DeviceCommand {
         trace_id: "trace-crash-1".into(),
         policy_grant_id: "grant-crash-1".into(),
     }
+}
+
+fn policy_authority() -> PolicyAuthority {
+    PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap()
+}
+
+fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGrant {
+    authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            issued_at_ms: 900,
+            expires_at_ms: 2_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap()
 }

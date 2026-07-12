@@ -8,7 +8,9 @@ license.workspace = true
 [dependencies]
 device-sim = { path = "../../crates/device-sim" }
 ergopilot-protocol = { path = "../../crates/ergopilot-protocol" }
+policy-core = { path = "../../crates/policy-core" }
 station-core = { path = "../../crates/station-core" }
+task-runtime = { path = "../../crates/task-runtime" }
 thiserror.workspace = true
 
 [dev-dependencies]

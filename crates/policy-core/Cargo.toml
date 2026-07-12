@@ -1,5 +1,5 @@
 [package]
-name = "device-sim"
+name = "policy-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,10 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 ergopilot-protocol = { path = "../ergopilot-protocol" }
-rusqlite.workspace = true
-station-core = { path = "../station-core" }
+hex.workspace = true
+hmac.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-policy-core = { path = "../policy-core" }
-tempfile.workspace = true

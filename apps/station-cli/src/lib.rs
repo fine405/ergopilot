@@ -1,7 +1,8 @@
 use device_sim::{NextFault, SimulatorError, SqliteSimulator};
 use ergopilot_protocol::{
-    CommandEvent, CommandStatus, DeviceAction, DeviceCommand, SCHEMA_VERSION,
+    CommandEvent, CommandStatus, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION,
 };
+use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use station_core::{RuntimeError, StationRuntime};
 use std::{
     ffi::OsString,
@@ -9,9 +10,11 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
+use task_runtime::{TaskGoal, TaskRunStatus, TaskRunView, TaskRuntime, TaskRuntimeError, TaskSpec};
 use thiserror::Error;
 
 const DEMO_MARKER_CONTENT: &[u8] = b"ergopilot-station-cli-demo-v1\n";
+const DEMO_POLICY_KEY: &[u8] = b"ergopilot-local-demo-policy-key";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemoSummary {
@@ -22,6 +25,13 @@ pub struct DemoSummary {
     pub movement_count: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovalDemoSummary {
+    pub before_approval: TaskRunStatus,
+    pub after_approval: TaskRunStatus,
+    pub movement_count: u64,
+}
+
 #[derive(Debug, Error)]
 pub enum DemoError {
     #[error(transparent)]
@@ -29,11 +39,72 @@ pub enum DemoError {
     #[error(transparent)]
     Runtime(#[from] RuntimeError),
     #[error(transparent)]
+    Policy(#[from] PolicyError),
+    #[error(transparent)]
+    Task(#[from] TaskRuntimeError),
+    #[error(transparent)]
     Io(#[from] io::Error),
     #[error("recovery did not find the uncertain command")]
     MissingRecoveredCommand,
     #[error("refusing to overwrite unmarked database at {path}")]
     RefusingToOverwrite { path: PathBuf },
+}
+
+pub fn run_approval_demo(
+    database_path: impl AsRef<Path>,
+    output: &mut impl Write,
+) -> Result<ApprovalDemoSummary, DemoError> {
+    let database_path = database_path.as_ref();
+    reset_database(database_path)?;
+    let authority = PolicyAuthority::new(DEMO_POLICY_KEY)?;
+
+    writeln!(output, "ErgoPilot persistent approval runtime")?;
+    writeln!(output, "database={}", database_path.display())?;
+
+    let simulator = SqliteSimulator::open(database_path)?;
+    let mut first_process = TaskRuntime::open(database_path, simulator, authority.clone())?;
+    let awaiting = first_process.start(
+        TaskSpec {
+            task_id: "focus-session-demo".into(),
+            requested_by: "demo-user".into(),
+            goal: TaskGoal::PrepareFocusSession {
+                desk_height_mm: 780,
+            },
+        },
+        1_000,
+    )?;
+    writeln!(output, "\n[task created] status={:?}", awaiting.status)?;
+    writeln!(
+        output,
+        "  policy={:?} rules={}",
+        awaiting.policy_decision.outcome,
+        awaiting.policy_decision.rule_ids.join(",")
+    )?;
+    write_task_events(output, &awaiting)?;
+    let before_approval = awaiting.status;
+    drop(first_process);
+
+    let simulator = SqliteSimulator::open(database_path)?;
+    let mut restarted = TaskRuntime::open(database_path, simulator, authority)?;
+    let completed = restarted.approve(&awaiting.run_id, "demo-user", 1_100)?;
+    writeln!(
+        output,
+        "\n[process restarted + user approved] status={:?}",
+        completed.status
+    )?;
+    write_task_events(output, &completed)?;
+    let final_snapshot = restarted.station_snapshot(1_200)?;
+    writeln!(
+        output,
+        "\n[final device state] height={}mm movement_count={}",
+        final_snapshot.desk_height_mm, final_snapshot.movement_count
+    )?;
+
+    Ok(ApprovalDemoSummary {
+        before_approval,
+        after_approval: completed.status,
+        movement_count: final_snapshot.movement_count,
+    })
 }
 
 pub fn run_demo(
@@ -46,8 +117,9 @@ pub fn run_demo(
     writeln!(output, "ErgoPilot recoverable station runtime")?;
     writeln!(output, "database={}", database_path.display())?;
 
+    let authority = PolicyAuthority::new(DEMO_POLICY_KEY)?;
     let simulator = SqliteSimulator::open(database_path)?;
-    let mut first_process = StationRuntime::open(database_path, simulator)?;
+    let mut first_process = StationRuntime::open(database_path, simulator, authority.verifier())?;
     let initial = first_process.snapshot(1_000)?;
     let normal_command = command(
         "cmd-normal-1",
@@ -56,12 +128,13 @@ pub fn run_demo(
         760,
         initial.state_version,
     );
+    let normal_grant = grant_for(&authority, &normal_command, 1_000)?;
 
-    let first = first_process.execute(normal_command.clone(), 1_100)?;
+    let first = first_process.execute(normal_command.clone(), &normal_grant, 1_100)?;
     writeln!(output, "\n[normal] status={:?}", first.status)?;
     write_events(output, &first_process.events(&normal_command.command_id)?)?;
 
-    let replay = first_process.execute(normal_command, 1_200)?;
+    let replay = first_process.execute(normal_command, &normal_grant, 1_200)?;
     writeln!(
         output,
         "[duplicate delivery] replayed={} status={:?}",
@@ -71,7 +144,8 @@ pub fn run_demo(
 
     let mut simulator = SqliteSimulator::open(database_path)?;
     simulator.set_next_fault(NextFault::LoseReportAfterEffect);
-    let mut interrupted_process = StationRuntime::open(database_path, simulator)?;
+    let mut interrupted_process =
+        StationRuntime::open(database_path, simulator, authority.verifier())?;
     let before_interruption = interrupted_process.snapshot(2_000)?;
     let interrupted_command = command(
         "cmd-recovery-1",
@@ -80,8 +154,10 @@ pub fn run_demo(
         800,
         before_interruption.state_version,
     );
+    let interrupted_grant = grant_for(&authority, &interrupted_command, 2_000)?;
 
-    let uncertain = interrupted_process.execute(interrupted_command.clone(), 2_100)?;
+    let uncertain =
+        interrupted_process.execute(interrupted_command.clone(), &interrupted_grant, 2_100)?;
     writeln!(output, "\n[ack lost] status={:?}", uncertain.status)?;
     write_events(
         output,
@@ -90,7 +166,8 @@ pub fn run_demo(
     drop(interrupted_process);
 
     let simulator = SqliteSimulator::open(database_path)?;
-    let mut restarted_process = StationRuntime::open(database_path, simulator)?;
+    let mut restarted_process =
+        StationRuntime::open(database_path, simulator, authority.verifier())?;
     let recovered = restarted_process
         .reconcile_pending(2_200)?
         .into_iter()
@@ -142,11 +219,40 @@ fn command(
     }
 }
 
+fn grant_for(
+    authority: &PolicyAuthority,
+    command: &DeviceCommand,
+    issued_at_ms: u64,
+) -> Result<PolicyGrant, PolicyError> {
+    authority.issue(GrantRequest {
+        grant_id: command.policy_grant_id.clone(),
+        task_run_id: command.task_run_id.clone(),
+        command_id: command.command_id.clone(),
+        action: command.action.clone(),
+        issued_at_ms,
+        expires_at_ms: command.expires_at_ms,
+        rule_ids: vec!["desk.motion.requires_approval".into()],
+    })
+}
+
 fn write_events(output: &mut impl Write, events: &[CommandEvent]) -> io::Result<()> {
     for event in events {
         writeln!(
             output,
             "  event#{:02} {:<22} at={}ms",
+            event.sequence,
+            event.event_type.as_str(),
+            event.at_ms
+        )?;
+    }
+    Ok(())
+}
+
+fn write_task_events(output: &mut impl Write, run: &TaskRunView) -> io::Result<()> {
+    for event in &run.events {
+        writeln!(
+            output,
+            "  task-event#{:02} {:<22} at={}ms",
             event.sequence,
             event.event_type.as_str(),
             event.at_ms

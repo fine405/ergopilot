@@ -1,0 +1,494 @@
+use ergopilot_protocol::{
+    CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant,
+    PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+};
+use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use station_core::{DeviceAdapter, RuntimeError, StationRuntime};
+use std::path::Path;
+use thiserror::Error;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "input", rename_all = "snake_case")]
+pub enum TaskGoal {
+    PrepareFocusSession {
+        #[serde(rename = "deskHeightMm")]
+        desk_height_mm: u16,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSpec {
+    pub task_id: String,
+    pub requested_by: String,
+    pub goal: TaskGoal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRunStatus {
+    AwaitingApproval,
+    Executing,
+    Completed,
+    OutcomeUnknown,
+    Failed,
+    Denied,
+    Suspended,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Pending,
+    Approved,
+    Expired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalView {
+    pub approval_id: String,
+    pub expires_at_ms: u64,
+    pub status: ApprovalStatus,
+    pub approved_by: Option<String>,
+    pub approved_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEventType {
+    RunStarted,
+    ApprovalRequired,
+    ApprovalGranted,
+    ApprovalExpired,
+    CommandDispatched,
+    RunCompleted,
+    OutcomeUnknown,
+    RunFailed,
+    PolicyDenied,
+    RunReconciled,
+    RunSuspended,
+}
+
+impl TaskEventType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RunStarted => "run_started",
+            Self::ApprovalRequired => "approval_required",
+            Self::ApprovalGranted => "approval_granted",
+            Self::ApprovalExpired => "approval_expired",
+            Self::CommandDispatched => "command_dispatched",
+            Self::RunCompleted => "run_completed",
+            Self::OutcomeUnknown => "outcome_unknown",
+            Self::RunFailed => "run_failed",
+            Self::PolicyDenied => "policy_denied",
+            Self::RunReconciled => "run_reconciled",
+            Self::RunSuspended => "run_suspended",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEvent {
+    pub sequence: u64,
+    pub event_type: TaskEventType,
+    pub at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRunView {
+    pub run_id: String,
+    pub task_id: String,
+    pub status: TaskRunStatus,
+    pub approval: Option<ApprovalView>,
+    pub command: Option<CommandView>,
+    pub events: Vec<TaskEvent>,
+    pub policy_decision: PolicyDecision,
+}
+
+#[derive(Debug, Error)]
+pub enum TaskRuntimeError {
+    #[error(transparent)]
+    Station(#[from] RuntimeError),
+    #[error(transparent)]
+    Policy(#[from] PolicyError),
+    #[error(transparent)]
+    Storage(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Serialization(#[from] serde_json::Error),
+    #[error("task run {run_id} was not found")]
+    RunNotFound { run_id: String },
+    #[error("task run {run_id} contains inconsistent persisted command state")]
+    CorruptRun { run_id: String },
+    #[error("task id {task_id} was already used for a different specification")]
+    TaskIdConflict { task_id: String },
+    #[error("approval belongs to {expected}, but was submitted by {actual}")]
+    UnauthorizedApprover { expected: String, actual: String },
+    #[error("task run {run_id} is not awaiting approval")]
+    RunNotApprovable { run_id: String },
+    #[error("task run {run_id} has no matching pending device command")]
+    PendingCommandNotFound { run_id: String },
+    #[error("automatic allow is not implemented for this task goal")]
+    UnsupportedAutomaticAllow,
+    #[error("approval expired at {expires_at_ms}, current time is {now_ms}")]
+    ApprovalExpired { expires_at_ms: u64, now_ms: u64 },
+}
+
+pub struct TaskRuntime<D> {
+    connection: Connection,
+    station: StationRuntime<D>,
+    policy_authority: PolicyAuthority,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredRun {
+    spec: TaskSpec,
+    expected_state_version: Option<u64>,
+    view: TaskRunView,
+    command: Option<DeviceCommand>,
+    grant: Option<PolicyGrant>,
+}
+
+impl<D: DeviceAdapter> TaskRuntime<D> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        device: D,
+        policy_authority: PolicyAuthority,
+    ) -> Result<Self, TaskRuntimeError> {
+        let path = path.as_ref();
+        let connection = Connection::open(path)?;
+        connection.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS task_runs (
+                run_id TEXT PRIMARY KEY,
+                stored_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );
+            ",
+        )?;
+        let station = StationRuntime::open(path, device, policy_authority.verifier())?;
+
+        Ok(Self {
+            connection,
+            station,
+            policy_authority,
+        })
+    }
+
+    pub fn start(&mut self, spec: TaskSpec, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
+        let run_id = format!("run-{}", spec.task_id);
+        if let Some(existing) = self.try_load_run(&run_id)? {
+            if existing.spec == spec {
+                return Ok(existing.view);
+            }
+            return Err(TaskRuntimeError::TaskIdConflict {
+                task_id: spec.task_id,
+            });
+        }
+        let action = action_for_goal(&spec.goal);
+        let policy_decision = self.policy_authority.evaluate(&action);
+        let (status, approval, second_event, expected_state_version) = match policy_decision.outcome
+        {
+            PolicyOutcome::RequireApproval => (
+                TaskRunStatus::AwaitingApproval,
+                Some(ApprovalView {
+                    approval_id: format!("approval-{run_id}"),
+                    expires_at_ms: now_ms + 60_000,
+                    status: ApprovalStatus::Pending,
+                    approved_by: None,
+                    approved_at_ms: None,
+                }),
+                TaskEventType::ApprovalRequired,
+                Some(self.station.snapshot(now_ms)?.state_version),
+            ),
+            PolicyOutcome::Deny => (
+                TaskRunStatus::Denied,
+                None,
+                TaskEventType::PolicyDenied,
+                None,
+            ),
+            PolicyOutcome::Allow => return Err(TaskRuntimeError::UnsupportedAutomaticAllow),
+        };
+        let view = TaskRunView {
+            run_id: run_id.clone(),
+            task_id: spec.task_id.clone(),
+            status,
+            approval,
+            command: None,
+            events: vec![
+                TaskEvent {
+                    sequence: 1,
+                    event_type: TaskEventType::RunStarted,
+                    at_ms: now_ms,
+                },
+                TaskEvent {
+                    sequence: 2,
+                    event_type: second_event,
+                    at_ms: now_ms,
+                },
+            ],
+            policy_decision,
+        };
+        self.save_run(
+            &StoredRun {
+                spec,
+                expected_state_version,
+                view: view.clone(),
+                command: None,
+                grant: None,
+            },
+            now_ms,
+        )?;
+        Ok(view)
+    }
+
+    pub fn inspect(&self, run_id: &str) -> Result<TaskRunView, TaskRuntimeError> {
+        Ok(self.load_run(run_id)?.view)
+    }
+
+    pub fn approve(
+        &mut self,
+        run_id: &str,
+        approved_by: &str,
+        now_ms: u64,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
+        let mut stored = self.load_run(run_id)?;
+        if stored.spec.requested_by != approved_by {
+            return Err(TaskRuntimeError::UnauthorizedApprover {
+                expected: stored.spec.requested_by,
+                actual: approved_by.into(),
+            });
+        }
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Suspended
+        ) {
+            return Ok(stored.view);
+        }
+        if stored.view.status == TaskRunStatus::Denied {
+            return Err(TaskRuntimeError::RunNotApprovable {
+                run_id: run_id.into(),
+            });
+        }
+
+        let expires_at_ms = stored
+            .view
+            .approval
+            .as_ref()
+            .map(|approval| approval.expires_at_ms)
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            })?;
+        if expires_at_ms <= now_ms && stored.command.is_none() {
+            if let Some(approval) = &mut stored.view.approval {
+                approval.status = ApprovalStatus::Expired;
+            }
+            append_event(&mut stored.view, TaskEventType::ApprovalExpired, now_ms);
+            self.save_run(&stored, now_ms)?;
+            return Err(TaskRuntimeError::ApprovalExpired {
+                expires_at_ms,
+                now_ms,
+            });
+        }
+
+        if stored.command.is_none() && stored.grant.is_none() {
+            let command = command_for(&stored, run_id, expires_at_ms)?;
+            let grant = self.policy_authority.issue(GrantRequest {
+                grant_id: command.policy_grant_id.clone(),
+                task_run_id: command.task_run_id.clone(),
+                command_id: command.command_id.clone(),
+                action: command.action.clone(),
+                issued_at_ms: now_ms,
+                expires_at_ms: command.expires_at_ms,
+                rule_ids: stored.view.policy_decision.rule_ids.clone(),
+            })?;
+            if let Some(approval) = &mut stored.view.approval {
+                approval.status = ApprovalStatus::Approved;
+                approval.approved_by = Some(approved_by.into());
+                approval.approved_at_ms = Some(now_ms);
+            }
+            append_event(&mut stored.view, TaskEventType::ApprovalGranted, now_ms);
+            append_event(&mut stored.view, TaskEventType::CommandDispatched, now_ms);
+            stored.view.status = TaskRunStatus::Executing;
+            stored.command = Some(command);
+            stored.grant = Some(grant);
+            self.save_run(&stored, now_ms)?;
+        }
+
+        let (command, grant) = match (&stored.command, &stored.grant) {
+            (Some(command), Some(grant)) => (command.clone(), grant.clone()),
+            _ => {
+                return Err(TaskRuntimeError::CorruptRun {
+                    run_id: run_id.into(),
+                })
+            }
+        };
+        let command_view = match self.station.execute(command, &grant, now_ms) {
+            Ok(command_view) => command_view,
+            Err(RuntimeError::StaleState { .. }) => {
+                stored.view.status = TaskRunStatus::Suspended;
+                append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                self.save_run(&stored, now_ms)?;
+                return Ok(stored.view);
+            }
+            Err(error @ RuntimeError::Device(_)) => {
+                stored.view.status = TaskRunStatus::Failed;
+                append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
+                self.save_run(&stored, now_ms)?;
+                return Err(error.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let (status, event_type) = match command_view.status {
+            CommandStatus::Succeeded => (TaskRunStatus::Completed, TaskEventType::RunCompleted),
+            CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
+                (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
+            }
+            CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
+        };
+        stored.view.status = status;
+        stored.view.command = Some(command_view);
+        append_event(&mut stored.view, event_type, now_ms);
+        self.save_run(&stored, now_ms)?;
+        Ok(stored.view)
+    }
+
+    pub fn station_snapshot(
+        &mut self,
+        observed_at_ms: u64,
+    ) -> Result<WorkstationSnapshot, TaskRuntimeError> {
+        Ok(self.station.snapshot(observed_at_ms)?)
+    }
+
+    pub fn reconcile(
+        &mut self,
+        run_id: &str,
+        now_ms: u64,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
+        let mut stored = self.load_run(run_id)?;
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Completed
+                | TaskRunStatus::Failed
+                | TaskRunStatus::Denied
+                | TaskRunStatus::Suspended
+        ) {
+            return Ok(stored.view);
+        }
+        let command_id = stored
+            .command
+            .as_ref()
+            .map(|command| command.command_id.as_str())
+            .ok_or_else(|| TaskRuntimeError::PendingCommandNotFound {
+                run_id: run_id.into(),
+            })?;
+        let command_view = self.station.reconcile_command(command_id, now_ms)?;
+
+        let (status, event_type) = match command_view.status {
+            CommandStatus::Succeeded => (TaskRunStatus::Completed, TaskEventType::RunReconciled),
+            CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
+            CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
+                (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
+            }
+        };
+        stored.view.status = status;
+        stored.view.command = Some(command_view);
+        if stored
+            .view
+            .events
+            .last()
+            .map(|event| event.event_type != event_type)
+            .unwrap_or(true)
+        {
+            append_event(&mut stored.view, event_type, now_ms);
+        }
+        self.save_run(&stored, now_ms)?;
+        Ok(stored.view)
+    }
+
+    fn load_run(&self, run_id: &str) -> Result<StoredRun, TaskRuntimeError> {
+        self.try_load_run(run_id)?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.into(),
+            })
+    }
+
+    fn try_load_run(&self, run_id: &str) -> Result<Option<StoredRun>, TaskRuntimeError> {
+        let stored_json = self
+            .connection
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        stored_json
+            .map(|stored_json| serde_json::from_str(&stored_json).map_err(Into::into))
+            .transpose()
+    }
+
+    fn save_run(&self, run: &StoredRun, now_ms: u64) -> Result<(), TaskRuntimeError> {
+        let stored_json = serde_json::to_string(run)?;
+        self.connection.execute(
+            "INSERT INTO task_runs (run_id, stored_json, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(run_id) DO UPDATE SET
+                 stored_json = excluded.stored_json,
+                 updated_at_ms = excluded.updated_at_ms",
+            params![&run.view.run_id, stored_json, now_ms],
+        )?;
+        Ok(())
+    }
+}
+
+fn command_for(
+    stored: &StoredRun,
+    run_id: &str,
+    expires_at_ms: u64,
+) -> Result<DeviceCommand, TaskRuntimeError> {
+    let action = action_for_goal(&stored.spec.goal);
+    let expected_state_version =
+        stored
+            .expected_state_version
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            })?;
+    Ok(DeviceCommand {
+        schema_version: SCHEMA_VERSION,
+        command_id: format!("cmd-{run_id}-desk-1"),
+        task_run_id: run_id.into(),
+        action,
+        expected_state_version,
+        idempotency_key: format!("{run_id}:desk:step-1"),
+        expires_at_ms,
+        trace_id: format!("trace-{run_id}"),
+        policy_grant_id: format!("grant-{run_id}-desk-1"),
+    })
+}
+
+fn action_for_goal(goal: &TaskGoal) -> DeviceAction {
+    match goal {
+        TaskGoal::PrepareFocusSession { desk_height_mm } => DeviceAction::DeskMoveToHeight {
+            height_mm: *desk_height_mm,
+        },
+    }
+}
+
+fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
+    let sequence = view
+        .events
+        .last()
+        .map(|event| event.sequence + 1)
+        .unwrap_or(1);
+    view.events.push(TaskEvent {
+        sequence,
+        event_type,
+        at_ms,
+    });
+}

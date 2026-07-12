@@ -1,5 +1,5 @@
 [package]
-name = "device-sim"
+name = "task-runtime"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,10 +7,13 @@ rust-version.workspace = true
 
 [dependencies]
 ergopilot-protocol = { path = "../ergopilot-protocol" }
+policy-core = { path = "../policy-core" }
 rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 station-core = { path = "../station-core" }
 thiserror.workspace = true
 
 [dev-dependencies]
-policy-core = { path = "../policy-core" }
+device-sim = { path = "../device-sim" }
 tempfile.workspace = true

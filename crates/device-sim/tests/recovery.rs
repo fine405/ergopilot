@@ -1,5 +1,6 @@
 use device_sim::{NextFault, SqliteSimulator};
-use ergopilot_protocol::{CommandStatus, DeviceAction, DeviceCommand, SCHEMA_VERSION};
+use ergopilot_protocol::{CommandStatus, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION};
+use policy_core::{GrantRequest, PolicyAuthority};
 use station_core::{DeviceAdapter, StationRuntime};
 
 fn command(expected_state_version: u64) -> DeviceCommand {
@@ -16,6 +17,20 @@ fn command(expected_state_version: u64) -> DeviceCommand {
     }
 }
 
+fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGrant {
+    authority
+        .issue(GrantRequest {
+            grant_id: command.policy_grant_id.clone(),
+            task_run_id: command.task_run_id.clone(),
+            command_id: command.command_id.clone(),
+            action: command.action.clone(),
+            issued_at_ms: 1_000,
+            expires_at_ms: 10_000,
+            rule_ids: vec!["desk.motion.requires_approval".into()],
+        })
+        .unwrap()
+}
+
 #[test]
 fn restart_reconciles_an_effect_that_happened_before_the_terminal_ack() {
     let directory = tempfile::tempdir().unwrap();
@@ -23,26 +38,29 @@ fn restart_reconciles_an_effect_that_happened_before_the_terminal_ack() {
 
     let mut simulator = SqliteSimulator::open(&database).unwrap();
     let initial = simulator.snapshot(1_000).unwrap();
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let command = command(initial.state_version);
+    let grant = grant_for(&authority, &command);
     simulator.set_next_fault(NextFault::LoseReportAfterEffect);
-    let mut first_process = StationRuntime::open(&database, simulator).unwrap();
+    let mut first_process =
+        StationRuntime::open(&database, simulator, authority.verifier()).unwrap();
 
     let uncertain = first_process
-        .execute(command(initial.state_version), 1_100)
+        .execute(command.clone(), &grant, 1_100)
         .unwrap();
     assert_eq!(uncertain.status, CommandStatus::OutcomeUnknown);
     drop(first_process);
 
     let simulator = SqliteSimulator::open(&database).unwrap();
-    let mut restarted_process = StationRuntime::open(&database, simulator).unwrap();
+    let mut restarted_process =
+        StationRuntime::open(&database, simulator, authority.verifier()).unwrap();
     let recovered = restarted_process.reconcile_pending(1_200).unwrap();
 
     assert_eq!(recovered.len(), 1);
     assert_eq!(recovered[0].status, CommandStatus::Succeeded);
     assert_eq!(recovered[0].outcome.as_ref().unwrap().desk_height_mm, 760);
 
-    let replay = restarted_process
-        .execute(command(initial.state_version), 1_300)
-        .unwrap();
+    let replay = restarted_process.execute(command, &grant, 1_300).unwrap();
     assert!(replay.was_replayed);
     assert_eq!(restarted_process.snapshot(1_301).unwrap().movement_count, 1);
 }
