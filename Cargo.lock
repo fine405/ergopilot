@@ -350,6 +350,8 @@ dependencies = [
  "device-sim",
  "ergopilot-protocol",
  "policy-core",
+ "serde",
+ "serde_json",
  "station-core",
  "task-runtime",
  "tempfile",

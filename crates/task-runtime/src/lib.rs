@@ -1,6 +1,6 @@
 use ergopilot_protocol::{
-    CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant,
-    PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandEvent, CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyDecision,
+    PolicyGrant, PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -152,9 +152,12 @@ pub struct TaskEvent {
 pub struct TaskRunView {
     pub run_id: String,
     pub task_id: String,
+    pub task: TaskSpec,
     pub status: TaskRunStatus,
     pub approval: Option<ApprovalView>,
     pub command: Option<CommandView>,
+    #[serde(default)]
+    pub command_events: Vec<CommandEvent>,
     pub events: Vec<TaskEvent>,
     pub policy_decision: PolicyDecision,
 }
@@ -200,7 +203,6 @@ pub struct TaskRuntime<D> {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredRun {
-    spec: TaskSpec,
     expected_state_version: Option<u64>,
     view: TaskRunView,
     command: Option<DeviceCommand>,
@@ -238,7 +240,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         validate_task_spec(&spec)?;
         let run_id = format!("run-{}", spec.task_id);
         if let Some(existing) = self.try_load_run(&run_id)? {
-            if existing.spec == spec {
+            if existing.view.task == spec {
                 return Ok(existing.view);
             }
             return Err(TaskRuntimeError::TaskIdConflict {
@@ -272,9 +274,11 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         let view = TaskRunView {
             run_id: run_id.clone(),
             task_id: spec.task_id.clone(),
+            task: spec,
             status,
             approval,
             command: None,
+            command_events: Vec::new(),
             events: vec![
                 TaskEvent {
                     sequence: 1,
@@ -291,7 +295,6 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         };
         self.save_run(
             &StoredRun {
-                spec,
                 expected_state_version,
                 view: view.clone(),
                 command: None,
@@ -313,9 +316,9 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         now_ms: u64,
     ) -> Result<TaskRunView, TaskRuntimeError> {
         let mut stored = self.load_run(run_id)?;
-        if stored.spec.requested_by != approved_by {
+        if stored.view.task.requested_by != approved_by {
             return Err(TaskRuntimeError::UnauthorizedApprover {
-                expected: stored.spec.requested_by,
+                expected: stored.view.task.requested_by.clone(),
                 actual: approved_by.into(),
             });
         }
@@ -415,6 +418,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         };
         stored.view.status = status;
         stored.view.command = Some(command_view);
+        self.refresh_command_events(&mut stored)?;
         append_event(&mut stored.view, event_type, now_ms);
         self.save_run(&stored, now_ms)?;
         if status == TaskRunStatus::Failed {
@@ -488,6 +492,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         };
         stored.view.status = status;
         stored.view.command = Some(command_view);
+        self.refresh_command_events(&mut stored)?;
         append_event_once(&mut stored.view, event_type, now_ms);
         self.save_run(&stored, now_ms)?;
         if status == TaskRunStatus::Failed {
@@ -514,9 +519,20 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        stored_json
-            .map(|stored_json| serde_json::from_str(&stored_json).map_err(Into::into))
-            .transpose()
+        let mut stored = stored_json
+            .map(|stored_json| deserialize_stored_run(run_id, &stored_json))
+            .transpose()?;
+        if let Some(stored) = &mut stored {
+            self.refresh_command_events(stored)?;
+        }
+        Ok(stored)
+    }
+
+    fn refresh_command_events(&self, stored: &mut StoredRun) -> Result<(), TaskRuntimeError> {
+        if let Some(command) = &stored.command {
+            stored.view.command_events = self.station.events(&command.command_id)?;
+        }
+        Ok(())
     }
 
     fn save_run(&self, run: &StoredRun, now_ms: u64) -> Result<(), TaskRuntimeError> {
@@ -533,13 +549,39 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     }
 }
 
+fn deserialize_stored_run(run_id: &str, stored_json: &str) -> Result<StoredRun, TaskRuntimeError> {
+    let mut value: serde_json::Value = serde_json::from_str(stored_json)?;
+    let task_is_missing = value
+        .get("view")
+        .and_then(|view| view.get("task"))
+        .is_none();
+    if task_is_missing {
+        let legacy_spec =
+            value
+                .get("spec")
+                .cloned()
+                .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                    run_id: run_id.into(),
+                })?;
+        let view = value
+            .get_mut("view")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            })?;
+        view.insert("task".into(), legacy_spec);
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
 fn command_for(
     stored: &StoredRun,
     run_id: &str,
     expires_at_ms: u64,
 ) -> Result<DeviceCommand, TaskRuntimeError> {
     let step = stored
-        .spec
+        .view
+        .task
         .steps
         .first()
         .ok_or(TaskRuntimeError::InvalidTaskSpec {

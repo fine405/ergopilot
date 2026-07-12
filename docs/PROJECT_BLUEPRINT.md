@@ -1,7 +1,7 @@
 # ErgoPilot project blueprint
 
-Status: implementation in progress; local command/recovery and policy/approval
-tracer bullets run
+Status: implementation in progress; the local Rust command/recovery runtime,
+signed policy/approval path, Hono API and TanStack Start console run end to end
 
 Assumed portfolio schedule: 4–6 weeks
 
@@ -301,7 +301,9 @@ type PolicyDecision = {
 ```
 
 Approval identity, expiry and status are durable fields on `TaskRunView`; a
-policy decision is evidence for why a run was allowed, paused or denied.
+policy decision is evidence for why a run was allowed, paused or denied. The
+current view also carries the validated `TaskSpec`, so a browser reload can
+still explain the exact action and constraints under approval.
 
 ## 6. Deep module interfaces
 
@@ -458,8 +460,8 @@ and demonstrations.
 
 ### 10.3 UI ownership
 
-Use shadcn/ui as the base design system and selected AI Elements for AI-native
-rendering:
+Use shadcn/ui as the base design system. Add selected AI Elements only when a
+screen is rendering actual AI SDK message or tool parts:
 
 | Need | UI implementation |
 | --- | --- |
@@ -467,7 +469,8 @@ rendering:
 | User input | AI Elements `PromptInput` |
 | Semantic plan | AI Elements `Plan` or `Task` |
 | Tool state | AI Elements `Tool` with domain labels |
-| Human approval | AI Elements `Confirmation` wired to workflow signals |
+| Deterministic human approval | shadcn/ui `AlertDialog` wired to task state |
+| AI-initiated tool confirmation | AI Elements `Confirmation` after AI SDK integration |
 | Pending work | AI Elements `Queue` |
 | Recovery marker | AI Elements `Checkpoint` |
 | Device visualization | Custom `WorkstationTwin` |
@@ -482,14 +485,18 @@ assistant-ui is deferred. If multi-thread conversation management becomes a
 real requirement, it may own chat state only; task and device state remain in
 their existing authoritative systems.
 
+The current console contains no generated prose or AI SDK tool part, so it uses
+shadcn/ui only. This keeps a deterministic approval from being disguised as a
+chat interaction; AI Elements enter with the Mastra planner slice.
+
 ## 11. Repository layout
 
 ```text
 ergopilot/
 ├── apps/
 │   ├── station-cli/         # executable recovery and approval demos
-│   ├── console/             # TanStack Start web console
-│   ├── control-plane/       # Hono, Mastra, Workers, Workflows and DO
+│   ├── web/                 # current TanStack Start operator console
+│   ├── control-plane/       # current Hono API and station process adapter
 │   └── station/             # Tauri application
 ├── crates/
 │   ├── ergopilot-protocol/  # versioned cross-runtime JSON types
@@ -499,7 +506,7 @@ ergopilot/
 │   ├── device-sim/          # deterministic simulator
 │   └── device-mqtt/         # later adapter
 ├── packages/
-│   ├── protocol/            # versioned schemas and generated types
+│   ├── contracts/           # current Zod schemas and TypeScript types
 │   ├── domain-ui/           # custom workstation/run components
 │   ├── ui/                  # shadcn and selected AI Elements source
 │   └── evals/               # datasets and scorers
@@ -546,6 +553,11 @@ or lose the final outcome.
 
 Exit criterion: the web console can run the same hard-coded `TaskSpec` against
 the local simulator.
+
+Current milestone: this exit criterion is met through a local Hono-to-Rust JSON
+process adapter. The API is bound to loopback while approval identity remains a
+local demo assertion. Authentication, the Durable Object, outbound station
+WebSocket and hosted deployment remain the next remote-coordination slice.
 
 ### Week 4 — durable workflow and Agent planner
 

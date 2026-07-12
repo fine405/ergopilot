@@ -1,0 +1,28 @@
+{
+  "name": "@ergopilot/control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json",
+    "check": "biome check src",
+    "dev": "tsx watch src/index.ts",
+    "format:check": "biome format src",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ergopilot/contracts": "workspace:*",
+    "@hono/node-server": "^1.0.0",
+    "@hono/zod-validator": "^0.7.0",
+    "hono": "^4.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0"
+  }
+}

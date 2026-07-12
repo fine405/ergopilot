@@ -1,83 +1,112 @@
 # ErgoPilot
 
 ErgoPilot is a recoverable embodied-agent runtime for a simulated ergonomic
-workstation. It turns a user goal into safe, observable and resumable actions
-across a chair, standing desk and desktop focus controls.
+workstation. It turns a typed work goal into a safe, observable and resumable
+desk action while keeping policy and physical execution outside the LLM.
 
 The project is deliberately not a posture chatbot. Its primary engineering
 problem is reliable execution against fallible devices:
 
-- semantic capability discovery;
-- policy-gated actions and human approval;
-- durable task orchestration;
-- idempotent local execution;
-- post-action state verification;
-- crash and disconnect recovery;
-- deterministic and model-based evaluation.
+- semantic capability and versioned task contracts;
+- policy-gated actions and durable human approval;
+- idempotent local execution and post-action verification;
+- crash, disconnect and uncertain-outcome recovery;
+- deterministic tests and an inspectable run timeline.
 
 The implementation plan and acceptance criteria are in
 [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md).
 
-## Planned stack
+## Current vertical slice
 
-- TanStack Start, shadcn/ui and selected AI Elements for the web console
-- Hono and Mastra for the control plane and cognitive layer
-- Cloudflare Workers, Workflows and Durable Objects for cloud coordination
-- Tauri 2 and Rust for the local station runtime
-- SQLite for the local event journal
-- A deterministic Rust simulator first, followed by MQTT/Home Assistant and
-  optionally ROS 2/Gazebo adapters
+The local Rust runtime, Hono API and TanStack Start operator console are
+runnable end to end. The current slice implements:
 
-## Current status
+- a strict, shared `TaskSpec` and `TaskRunView` JSON contract;
+- an HMAC-signed policy grant bound to one run, command, action and expected
+  device-state version;
+- deterministic `deny` and `require_approval` decisions;
+- durable approval ownership, expiry, run state and ordered events in SQLite;
+- persist-before-effect execution, idempotent replay and read-after-write
+  verification;
+- reconciliation across both task/command dispatch crash windows;
+- a bounded JSON process protocol between the TypeScript control plane and the
+  Rust station runtime;
+- server-owned timestamps and schema validation at the API boundary;
+- a responsive operator console for plan inspection, explicit approval,
+  station telemetry and evidence-backed completion;
+- URL-persisted run selection, so an in-progress approval survives refresh.
 
-The local runtime and persistent approval tracer bullets are runnable. They
-currently implement:
+The loopback-only control plane currently launches a short-lived
+`station-cli --rpc` process for each local request. Every process opens the same
+SQLite journal, so the boundary already exercises serialization and
+restart-safe state rather than an in-memory mock. The production path will add
+authenticated identity and replace this adapter with outbound Tauri/station
+connectivity, a Durable Object session and a durable cloud workflow; those
+parts are not claimed as implemented yet.
 
-- a versioned `DeviceCommand` protocol;
-- a narrow Rust device-adapter boundary;
-- SQLite command journaling and an SQLite-backed desk simulator;
-- HMAC-signed policy grants bound to one task, command, exact action and state
-  precondition;
-- grant issue/expiry checks, weak-key rejection and station-side verification;
-- deterministic `deny` and `require_approval` policy decisions;
-- durable task runs, approval ownership/expiry and ordered task timelines;
-- a versioned planner-to-runtime `TaskSpec` contract with goal, constraints,
-  assumptions and typed steps;
-- safe-envelope and stale-state checks at both policy and device seams;
-- persist-before-effect execution and read-after-write verification;
-- idempotent replay without a second physical effect;
-- fault injection for “effect happened, acknowledgement was lost”;
-- restart reconciliation across both sides of dispatch, including “task intent
-  saved before station journal” and “station finished before task result save”.
+## Run locally
 
-Run the complete scenario from the repository root:
+Prerequisites: Rust, Node.js and pnpm.
+
+```bash
+pnpm install
+pnpm dev
+```
+
+Open <http://localhost:3000>. The control plane listens on
+<http://localhost:8787>. Local development has a non-production policy key;
+copy `.env.example` to `.env` when you want to override paths, origins or
+credentials. Relative station paths are resolved from the repository root.
+
+The deterministic CLI demos remain available:
 
 ```bash
 pnpm demo
 pnpm demo:approval
 ```
 
-Run the verification suite:
+Run all verification gates:
 
 ```bash
-pnpm test
-pnpm check
+pnpm format
 pnpm lint
+pnpm check
+pnpm test
+pnpm build
 ```
 
-The demos intentionally have no LLM dependency: their tasks are fixed so that
-execution, approval and recovery semantics can be tested deterministically. The
-next vertical slice exposes `TaskRunView` through Hono and renders its policy,
-approval and event timeline in the TanStack Start console. Mastra planning is
-attached only after that deterministic control path is reliable.
+The tracer bullet intentionally has no LLM dependency. Its fixed typed task
+makes execution, approval, idempotency and recovery behavior reproducible. A
+Mastra planner will later translate natural-language intent into the same
+validated `TaskSpec`; it will not receive authority over policy or device
+execution.
 
-Key modules:
+## Stack decisions
 
-- `crates/ergopilot-protocol`: shared versioned command and event types;
-- `crates/policy-core`: deterministic decisions plus signed grant issue and
-  verification;
-- `crates/station-core`: validation, journal, execution, verification and
-  reconciliation;
+- **Rust + SQLite:** authoritative local task, policy and device runtime.
+- **Hono on Node.js:** a thin typed control-plane boundary for the local slice.
+- **TanStack Start + Query:** routing, reload-safe URL state and server-state
+  synchronization for the web console.
+- **shadcn/ui:** deterministic product UI such as cards, status, forms and the
+  explicit approval dialog.
+- **AI Elements, later:** only for actual model-generated explanations, plans
+  and AI SDK tool parts after the Mastra planner exists.
+- **assistant-ui, deferred:** useful only if multi-thread conversation becomes
+  a real product requirement; ErgoPilot remains task-first rather than
+  chat-first.
+- **Cloudflare + Tauri, planned:** remote coordination and local device access.
+  The current process adapter keeps those deployment concerns out of the first
+  reliability proof.
+
+## Key modules
+
+- `packages/contracts`: shared Zod schemas and TypeScript types;
+- `apps/control-plane`: Hono routes and the bounded Rust process adapter;
+- `apps/web`: TanStack Start operator console;
+- `apps/station-cli`: JSON RPC boundary and executable recovery demos;
+- `crates/ergopilot-protocol`: versioned Rust command and event types;
+- `crates/policy-core`: deterministic decisions and signed grants;
 - `crates/task-runtime`: durable task/approval state and task-level recovery;
-- `crates/device-sim`: persistent simulated hardware plus fault injection;
-- `apps/station-cli`: an end-to-end executable demonstration.
+- `crates/station-core`: command journal, execution, verification and
+  reconciliation;
+- `crates/device-sim`: persistent simulated hardware and fault injection.

@@ -3,6 +3,8 @@ use ergopilot_protocol::{
     CommandEvent, CommandStatus, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use station_core::{RuntimeError, StationRuntime};
 use std::{
     ffi::OsString,
@@ -15,6 +17,7 @@ use thiserror::Error;
 
 const DEMO_MARKER_CONTENT: &[u8] = b"ergopilot-station-cli-demo-v1\n";
 const DEMO_POLICY_KEY: &[u8] = b"ergopilot-local-demo-policy-key";
+pub const MAX_RPC_INPUT_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DemoSummary {
@@ -44,10 +47,86 @@ pub enum DemoError {
     Task(#[from] TaskRuntimeError),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error(transparent)]
+    Serialization(#[from] serde_json::Error),
     #[error("recovery did not find the uncertain command")]
     MissingRecoveredCommand,
     #[error("refusing to overwrite unmarked database at {path}")]
     RefusingToOverwrite { path: PathBuf },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "method", content = "params")]
+pub enum RpcRequest {
+    #[serde(rename = "task.start")]
+    StartTask {
+        task: TaskSpec,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
+    #[serde(rename = "task.inspect")]
+    InspectTask {
+        #[serde(rename = "runId")]
+        run_id: String,
+    },
+    #[serde(rename = "task.approve")]
+    ApproveTask {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "approvedBy")]
+        approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
+    #[serde(rename = "task.reconcile")]
+    ReconcileTask {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
+    #[serde(rename = "station.snapshot")]
+    StationSnapshot {
+        #[serde(rename = "observedAtMs")]
+        observed_at_ms: u64,
+    },
+}
+
+pub fn run_rpc(
+    database_path: impl AsRef<Path>,
+    authority: PolicyAuthority,
+    request: RpcRequest,
+    output: &mut impl Write,
+) -> Result<(), DemoError> {
+    let database_path = database_path.as_ref();
+    if let Some(parent) = database_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let simulator = SqliteSimulator::open(database_path)?;
+    let mut runtime = TaskRuntime::open(database_path, simulator, authority)?;
+    let result = match request {
+        RpcRequest::StartTask { task, now_ms } => {
+            serde_json::to_value(runtime.start(task, now_ms)?)?
+        }
+        RpcRequest::InspectTask { run_id } => serde_json::to_value(runtime.inspect(&run_id)?)?,
+        RpcRequest::ApproveTask {
+            run_id,
+            approved_by,
+            now_ms,
+        } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
+        RpcRequest::ReconcileTask { run_id, now_ms } => {
+            serde_json::to_value(runtime.reconcile(&run_id, now_ms)?)?
+        }
+        RpcRequest::StationSnapshot { observed_at_ms } => {
+            serde_json::to_value(runtime.station_snapshot(observed_at_ms)?)?
+        }
+    };
+    serde_json::to_writer(&mut *output, &json!({ "ok": true, "result": result }))?;
+    writeln!(output)?;
+    Ok(())
 }
 
 pub fn run_approval_demo(

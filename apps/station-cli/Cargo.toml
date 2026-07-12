@@ -9,6 +9,8 @@ license.workspace = true
 device-sim = { path = "../../crates/device-sim" }
 ergopilot-protocol = { path = "../../crates/ergopilot-protocol" }
 policy-core = { path = "../../crates/policy-core" }
+serde.workspace = true
+serde_json.workspace = true
 station-core = { path = "../../crates/station-core" }
 task-runtime = { path = "../../crates/task-runtime" }
 thiserror.workspace = true

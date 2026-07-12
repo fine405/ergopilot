@@ -1,6 +1,7 @@
 use device_sim::SqliteSimulator;
 use ergopilot_protocol::{DeviceAction, SCHEMA_VERSION};
 use policy_core::PolicyAuthority;
+use rusqlite::{params, Connection};
 use serde_json::json;
 use task_runtime::{
     InterruptionPolicy, PlannedStep, TaskConstraints, TaskGoal, TaskRuntime, TaskSpec,
@@ -61,17 +62,79 @@ fn task_run_view_is_ready_for_a_typescript_timeline_consumer() {
     let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
     let mut runtime = TaskRuntime::open(&database, simulator, authority).unwrap();
 
-    let run = runtime
+    let awaiting = runtime
         .start(
             TaskSpec::prepare_focus_session("task-json-1", "user-1", 760),
             1_000,
         )
         .unwrap();
-    let json = serde_json::to_value(run).unwrap();
+    let awaiting_json = serde_json::to_value(awaiting).unwrap();
 
-    assert_eq!(json["status"], "awaiting_approval");
-    assert_eq!(json["approval"]["status"], "pending");
-    assert_eq!(json["policyDecision"]["outcome"], "require_approval");
-    assert_eq!(json["events"][0]["eventType"], "run_started");
-    assert_eq!(json["events"][1]["eventType"], "approval_required");
+    assert_eq!(awaiting_json["status"], "awaiting_approval");
+    assert_eq!(awaiting_json["task"]["goal"], "prepare_focus_session");
+    assert_eq!(awaiting_json["task"]["steps"][0]["stepId"], "desk-1");
+    assert_eq!(
+        awaiting_json["task"]["steps"][0]["action"]["input"]["heightMm"],
+        760
+    );
+    assert_eq!(awaiting_json["approval"]["status"], "pending");
+    assert_eq!(
+        awaiting_json["policyDecision"]["outcome"],
+        "require_approval"
+    );
+    assert_eq!(awaiting_json["events"][0]["eventType"], "run_started");
+    assert_eq!(awaiting_json["events"][1]["eventType"], "approval_required");
+
+    let completed = runtime.approve("run-task-json-1", "user-1", 1_100).unwrap();
+    let completed_json = serde_json::to_value(completed).unwrap();
+    assert_eq!(completed_json["commandEvents"][0]["eventType"], "accepted");
+    assert_eq!(
+        completed_json["commandEvents"][2]["eventType"],
+        "verified_succeeded"
+    );
+}
+
+#[test]
+fn task_runtime_reads_and_upgrades_the_previous_stored_run_shape() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let spec = TaskSpec::prepare_focus_session("task-legacy-json", "user-1", 780);
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    runtime.start(spec.clone(), 1_000).unwrap();
+    drop(runtime);
+
+    let connection = Connection::open(&database).unwrap();
+    let stored_json: String = connection
+        .query_row(
+            "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+            params!["run-task-legacy-json"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut legacy: serde_json::Value = serde_json::from_str(&stored_json).unwrap();
+    let view = legacy["view"].as_object_mut().unwrap();
+    let legacy_spec = view.remove("task").unwrap();
+    view.remove("commandEvents");
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .insert("spec".into(), legacy_spec);
+    connection
+        .execute(
+            "UPDATE task_runs SET stored_json = ?1 WHERE run_id = ?2",
+            params![legacy.to_string(), "run-task-legacy-json"],
+        )
+        .unwrap();
+    drop(connection);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let inspected = restarted.inspect("run-task-legacy-json").unwrap();
+    assert_eq!(inspected.task, spec);
+    let completed = restarted
+        .approve("run-task-legacy-json", "user-1", 1_100)
+        .unwrap();
+    assert_eq!(completed.status, task_runtime::TaskRunStatus::Completed);
 }

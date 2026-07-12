@@ -2,12 +2,27 @@
   "name": "ergopilot",
   "private": true,
   "packageManager": "pnpm@9.9.0",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
-    "check": "cargo check --workspace",
+    "build": "cargo build --workspace && pnpm -r --if-present build",
+    "check": "cargo check --workspace && pnpm -r --if-present typecheck",
     "demo": "cargo run -p station-cli -- target/ergopilot-demo.sqlite",
     "demo:approval": "cargo run -p station-cli -- --approval target/ergopilot-approval-demo.sqlite",
-    "format": "cargo fmt --all --check",
-    "lint": "cargo clippy --workspace --all-targets -- -D warnings",
-    "test": "cargo test --workspace"
+    "dev": "cargo build -p station-cli && concurrently -k -n api,web -c cyan,green \"pnpm --filter @ergopilot/control-plane dev\" \"pnpm --filter web dev\"",
+    "format": "cargo fmt --all --check && pnpm -r --if-present format:check",
+    "lint": "cargo clippy --workspace --all-targets -- -D warnings && pnpm -r --if-present check",
+    "test": "cargo test --workspace && cargo build -p station-cli && pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3",
+    "@types/node": "^26.1.1",
+    "concurrently": "^10.0.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "lightningcss"]
   }
 }
