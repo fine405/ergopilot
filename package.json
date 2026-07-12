@@ -11,6 +11,7 @@
     "demo": "cargo run -p station-cli -- target/ergopilot-demo.sqlite",
     "demo:approval": "cargo run -p station-cli -- --approval target/ergopilot-approval-demo.sqlite",
     "dev": "cargo build -p station-cli && concurrently -k -n api,web -c cyan,green \"pnpm --filter @ergopilot/control-plane dev\" \"pnpm --filter web dev\"",
+    "eval:planner": "pnpm --filter @ergopilot/control-plane eval:planner",
     "format": "cargo fmt --all --check && pnpm -r --if-present format:check",
     "lint": "cargo clippy --workspace --all-targets -- -D warnings && pnpm -r --if-present check",
     "test": "cargo test --workspace && cargo build -p station-cli && pnpm -r --if-present test"

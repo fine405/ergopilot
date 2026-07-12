@@ -10,6 +10,7 @@
     "build": "tsc --noEmit -p tsconfig.json",
     "check": "biome check src",
     "dev": "tsx watch src/index.ts",
+    "eval:planner": "tsx src/evaluate-planner.ts",
     "format:check": "biome format src",
     "start": "tsx src/index.ts",
     "test": "vitest run",

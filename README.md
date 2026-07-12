@@ -71,6 +71,13 @@ pnpm demo
 pnpm demo:approval
 ```
 
+Run the optional six-case live planner evaluation against a configured
+provider. This command makes real API calls and is not part of CI:
+
+```bash
+pnpm eval:planner deepseek
+```
+
 Run all verification gates:
 
 ```bash
