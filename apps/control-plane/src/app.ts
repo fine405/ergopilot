@@ -1,5 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
   approvalRequestSchema,
+  type PlannerAttempt,
+  plannerAttemptSchema,
+  plannerAttemptsResponseSchema,
   taskPlanRequestSchema,
   taskSpecSchema,
 } from "@ergopilot/contracts";
@@ -12,6 +16,7 @@ import type { StationClient } from "./station-client";
 import { StationRpcError } from "./station-client";
 import {
   describePlannerProviders,
+  PLANNER_PROVIDERS,
   PlannerError,
   type TaskPlannerRegistry,
 } from "./task-planner";
@@ -25,8 +30,15 @@ export interface AppOptions {
 export function createApp(station: StationClient, options: AppOptions = {}) {
   const now = options.now ?? Date.now;
   const allowedOrigin = options.allowedOrigin ?? "http://localhost:3000";
+  const plannerAttempts: PlannerAttempt[] = [];
   const app = new Hono()
-    .use("/api/*", cors({ origin: allowedOrigin }))
+    .use(
+      "/api/*",
+      cors({
+        origin: allowedOrigin,
+        exposeHeaders: ["X-ErgoPilot-Trace-Id"],
+      }),
+    )
     .use(
       "/api/*",
       bodyLimit({
@@ -49,13 +61,41 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     .get("/api/planner-providers", (context) =>
       context.json(describePlannerProviders(options.planners ?? {})),
     )
+    .get("/api/planner-attempts", (context) =>
+      context.json(
+        plannerAttemptsResponseSchema.parse({ attempts: plannerAttempts }),
+      ),
+    )
     .post(
       "/api/task-plans",
       zValidator("json", taskPlanRequestSchema),
       async (context) => {
         const request = context.req.valid("json");
+        const traceId = `plan-${randomUUID()}`;
+        const startedAtMs = now();
+        const recordAttempt = (
+          outcome: PlannerAttempt["outcome"],
+          taskId: string | null,
+          errorCode: PlannerAttempt["errorCode"],
+        ) => {
+          plannerAttempts.unshift(
+            plannerAttemptSchema.parse({
+              traceId,
+              provider: request.provider,
+              model: PLANNER_PROVIDERS[request.provider].model,
+              startedAtMs,
+              durationMs: Math.max(0, now() - startedAtMs),
+              outcome,
+              taskId,
+              errorCode,
+            }),
+          );
+          plannerAttempts.splice(100);
+        };
+        context.header("X-ErgoPilot-Trace-Id", traceId);
         const planner = options.planners?.[request.provider];
         if (!planner) {
+          recordAttempt("failed", null, "provider_unavailable");
           return context.json(
             {
               error: {
@@ -66,7 +106,18 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
             503,
           );
         }
-        return context.json(await planner.plan(request));
+        try {
+          const plan = await planner.plan(request);
+          recordAttempt("succeeded", plan.task.taskId, null);
+          return context.json(plan);
+        } catch (error) {
+          recordAttempt(
+            "failed",
+            null,
+            error instanceof PlannerError ? error.code : "internal_error",
+          );
+          throw error;
+        }
       },
     )
     .post(

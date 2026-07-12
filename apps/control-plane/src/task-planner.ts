@@ -25,7 +25,10 @@ const DEEPSEEK_PROVIDER = {
   keyEnvVar: "DEEPSEEK_API_KEY",
 } as const;
 
-export const PLANNER_PROVIDERS = [OPENAI_PROVIDER, DEEPSEEK_PROVIDER] as const;
+export const PLANNER_PROVIDERS = {
+  openai: OPENAI_PROVIDER,
+  deepseek: DEEPSEEK_PROVIDER,
+} as const;
 
 export interface TaskPlanner {
   plan(request: TaskPlanRequest): Promise<TaskPlanResponse>;
@@ -39,7 +42,7 @@ export function describePlannerProviders(
   planners: TaskPlannerRegistry,
 ): PlannerProvidersResponse {
   return plannerProvidersResponseSchema.parse({
-    providers: PLANNER_PROVIDERS.map(
+    providers: Object.values(PLANNER_PROVIDERS).map(
       ({ keyEnvVar: _keyEnvVar, ...provider }) => ({
         ...provider,
         enabled: Boolean(planners[provider.id]),
@@ -174,7 +177,7 @@ export class StructuredTaskPlanner implements TaskPlanner {
 }
 
 function createMastraTaskPlanner(
-  provider: (typeof PLANNER_PROVIDERS)[number],
+  provider: (typeof PLANNER_PROVIDERS)[PlannerProviderId],
 ): TaskPlanner {
   const agent = new Agent({
     id: `${provider.id}-workstation-planner`,

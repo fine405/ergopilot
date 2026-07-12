@@ -589,6 +589,12 @@ station reconnect remain future slices.
 
 Exit criterion: every success and failure in the demo has inspectable evidence.
 
+Current milestone: the Hono control plane exposes the latest 100 process-local
+attempts for schema-valid planning requests, with trace ID, provider/model,
+duration, outcome, task ID and stable error code. Prompts, user identifiers and
+credentials are excluded. Persistent export, request-validation telemetry, the
+planning dataset and scorer remain future slices.
+
 ### Week 6 — portfolio polish and one integration
 
 - Add MQTT/Home Assistant or a small physical device.

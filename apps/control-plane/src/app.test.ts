@@ -130,6 +130,54 @@ describe("control-plane API", () => {
     expect(station.startTask).not.toHaveBeenCalled();
   });
 
+  it("records privacy-safe evidence for a successful planning attempt", async () => {
+    const planner = fakePlanner();
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_025);
+    const app = createApp(fakeStation(), {
+      now,
+      planners: { deepseek: planner },
+    });
+
+    const planResponse = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:3000",
+      },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "Private workstation request",
+        requestedBy: "private-user",
+      }),
+    });
+    expect(planResponse.headers.get("Access-Control-Expose-Headers")).toBe(
+      "X-ErgoPilot-Trace-Id",
+    );
+    const response = await app.request("/api/planner-attempts");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      attempts: [
+        {
+          traceId: expect.stringMatching(/^plan-/),
+          provider: "deepseek",
+          model: "deepseek/deepseek-v4-flash",
+          startedAtMs: 1_000,
+          durationMs: 25,
+          outcome: "succeeded",
+          taskId: "task-api-1",
+          errorCode: null,
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("Private workstation request");
+    expect(JSON.stringify(body)).not.toContain("private-user");
+  });
+
   it("rejects a disabled provider without falling back to another one", async () => {
     const openai = fakePlanner();
     const app = createApp(fakeStation(), { planners: { openai } });
@@ -152,6 +200,22 @@ describe("control-plane API", () => {
       },
     });
     expect(openai.plan).not.toHaveBeenCalled();
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: "deepseek",
+          model: "deepseek/deepseek-v4-flash",
+          startedAtMs: expect.any(Number),
+          durationMs: expect.any(Number),
+          outcome: "failed",
+          taskId: null,
+          errorCode: "provider_unavailable",
+        },
+      ],
+    });
   });
 
   it("returns a stable error when model output cannot form a plan", async () => {
@@ -181,6 +245,22 @@ describe("control-plane API", () => {
         code: "invalid_plan",
         message: "planner returned an invalid workstation plan",
       },
+    });
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: "deepseek",
+          model: "deepseek/deepseek-v4-flash",
+          startedAtMs: expect.any(Number),
+          durationMs: expect.any(Number),
+          outcome: "failed",
+          taskId: null,
+          errorCode: "invalid_plan",
+        },
+      ],
     });
   });
 

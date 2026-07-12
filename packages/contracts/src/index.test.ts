@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  plannerAttemptsResponseSchema,
   plannerProvidersResponseSchema,
   taskPlanDraftSchema,
   taskPlanRequestSchema,
@@ -80,6 +81,53 @@ describe("TaskSpec contract", () => {
 });
 
 describe("Task planning contract", () => {
+  it("accepts privacy-safe planner attempt evidence", () => {
+    expect(
+      plannerAttemptsResponseSchema.parse({
+        attempts: [
+          {
+            traceId: "plan-trace-1",
+            provider: "deepseek",
+            model: "deepseek/deepseek-v4-flash",
+            startedAtMs: 1_000,
+            durationMs: 25,
+            outcome: "succeeded",
+            taskId: "task-agent-1",
+            errorCode: null,
+          },
+        ],
+      }).attempts[0],
+    ).toEqual({
+      traceId: "plan-trace-1",
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      startedAtMs: 1_000,
+      durationMs: 25,
+      outcome: "succeeded",
+      taskId: "task-agent-1",
+      errorCode: null,
+    });
+  });
+
+  it("rejects contradictory planner attempt evidence", () => {
+    expect(
+      plannerAttemptsResponseSchema.safeParse({
+        attempts: [
+          {
+            traceId: "plan-trace-invalid",
+            provider: "deepseek",
+            model: "deepseek/deepseek-v4-flash",
+            startedAtMs: 1_000,
+            durationMs: 25,
+            outcome: "succeeded",
+            taskId: null,
+            errorCode: "invalid_plan",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("describes configured and disabled planner providers", () => {
     expect(
       plannerProvidersResponseSchema.parse({

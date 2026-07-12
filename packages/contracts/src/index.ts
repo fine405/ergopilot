@@ -71,6 +71,43 @@ export const plannerProvidersResponseSchema = z
   })
   .strict();
 
+export const plannerAttemptErrorCodeSchema = z.enum([
+  "provider_unavailable",
+  "generation_failed",
+  "generation_timeout",
+  "invalid_plan",
+  "internal_error",
+]);
+
+const plannerAttemptBaseSchema = z
+  .object({
+    traceId: identifierSchema,
+    provider: plannerProviderIdSchema,
+    model: z.string().trim().min(1),
+    startedAtMs: z.number().int().nonnegative(),
+    durationMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const plannerAttemptSchema = z.discriminatedUnion("outcome", [
+  plannerAttemptBaseSchema.extend({
+    outcome: z.literal("succeeded"),
+    taskId: identifierSchema,
+    errorCode: z.null(),
+  }),
+  plannerAttemptBaseSchema.extend({
+    outcome: z.literal("failed"),
+    taskId: z.null(),
+    errorCode: plannerAttemptErrorCodeSchema,
+  }),
+]);
+
+export const plannerAttemptsResponseSchema = z
+  .object({
+    attempts: z.array(plannerAttemptSchema).max(100),
+  })
+  .strict();
+
 export const taskPlanRequestSchema = z
   .object({
     provider: plannerProviderIdSchema,
@@ -225,6 +262,10 @@ export type PlannerProvider = z.infer<typeof plannerProviderSchema>;
 export type PlannerProviderId = z.infer<typeof plannerProviderIdSchema>;
 export type PlannerProvidersResponse = z.infer<
   typeof plannerProvidersResponseSchema
+>;
+export type PlannerAttempt = z.infer<typeof plannerAttemptSchema>;
+export type PlannerAttemptsResponse = z.infer<
+  typeof plannerAttemptsResponseSchema
 >;
 export type TaskPlanDraft = z.infer<typeof taskPlanDraftSchema>;
 export type TaskPlanRequest = z.infer<typeof taskPlanRequestSchema>;
