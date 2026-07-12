@@ -455,7 +455,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 })
             }
         };
-        let command_view = match self.station.resume_command(command, &grant, now_ms) {
+        let mut device_error = None;
+        let command_view = match self.station.resume_command(command.clone(), &grant, now_ms) {
             Ok(command_view) => command_view,
             Err(
                 RuntimeError::StaleState { .. }
@@ -466,6 +467,14 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                 self.save_run(&stored, now_ms)?;
                 return Ok(stored.view);
+            }
+            Err(error @ RuntimeError::Device(_)) => {
+                if let Some(command_view) = self.station.inspect_command(&command)? {
+                    device_error = Some(error);
+                    command_view
+                } else {
+                    return Err(error.into());
+                }
             }
             Err(error) => return Err(error.into()),
         };
@@ -481,6 +490,11 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         stored.view.command = Some(command_view);
         append_event_once(&mut stored.view, event_type, now_ms);
         self.save_run(&stored, now_ms)?;
+        if status == TaskRunStatus::Failed {
+            if let Some(error) = device_error {
+                return Err(error.into());
+            }
+        }
         Ok(stored.view)
     }
 

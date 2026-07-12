@@ -15,6 +15,40 @@ struct ReadbackFailureDevice {
     fail_next_snapshot: bool,
 }
 
+struct ApplyFailureDevice {
+    snapshot: WorkstationSnapshot,
+}
+
+impl ApplyFailureDevice {
+    fn new() -> Self {
+        Self {
+            snapshot: WorkstationSnapshot {
+                schema_version: ergopilot_protocol::SCHEMA_VERSION,
+                station_id: "station-apply-failure".into(),
+                state_version: 1,
+                observed_at_ms: 0,
+                desk_height_mm: 720,
+                movement_count: 0,
+            },
+        }
+    }
+}
+
+impl DeviceAdapter for ApplyFailureDevice {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        self.snapshot.observed_at_ms = observed_at_ms;
+        Ok(self.snapshot.clone())
+    }
+
+    fn apply(
+        &mut self,
+        _action: &DeviceAction,
+        _expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        Err(DeviceError::new("actuator unavailable before effect"))
+    }
+}
+
 impl ReadbackFailureDevice {
     fn new() -> Self {
         Self {
@@ -159,6 +193,41 @@ fn restart_dispatches_a_persisted_intent_if_the_station_journal_is_still_empty()
 
     assert_eq!(recovered.status, TaskRunStatus::Completed);
     assert_eq!(restarted.station_snapshot(1_201).unwrap().movement_count, 1);
+}
+
+#[test]
+fn resumed_device_failure_is_persisted_on_the_task_during_the_same_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let crashing_device = CrashBeforeStationJournal {
+        simulator,
+        snapshot_calls: 0,
+    };
+    let authority = policy_authority();
+    let mut first_process =
+        TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-recovery-device-failure", "user-1", 780),
+            1_000,
+        )
+        .unwrap();
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        first_process
+            .approve(&awaiting.run_id, "user-1", 1_100)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(first_process);
+
+    let mut restarted = TaskRuntime::open(&database, ApplyFailureDevice::new(), authority).unwrap();
+    assert!(restarted.reconcile(&awaiting.run_id, 1_200).is_err());
+
+    assert_eq!(
+        restarted.inspect(&awaiting.run_id).unwrap().status,
+        TaskRunStatus::Failed
+    );
 }
 
 #[test]

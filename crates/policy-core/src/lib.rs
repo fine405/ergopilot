@@ -5,6 +5,7 @@ use ergopilot_protocol::{
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::Sha256;
+use std::fmt;
 use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -21,9 +22,18 @@ pub struct GrantRequest {
     pub rule_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PolicyAuthority {
     key: Vec<u8>,
+}
+
+impl fmt::Debug for PolicyAuthority {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PolicyAuthority")
+            .field("key", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Clone)]

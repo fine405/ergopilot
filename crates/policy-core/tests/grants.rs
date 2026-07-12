@@ -9,6 +9,16 @@ fn weak_policy_signing_key_is_rejected_at_startup() {
 }
 
 #[test]
+fn policy_authority_debug_output_redacts_the_signing_key() {
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+
+    assert_eq!(
+        format!("{authority:?}"),
+        "PolicyAuthority { key: \"[REDACTED]\" }"
+    );
+}
+
+#[test]
 fn authority_refuses_an_empty_grant_validity_window() {
     let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
     let command = command();
