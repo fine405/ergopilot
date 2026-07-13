@@ -98,6 +98,9 @@ describe("WorkstationTwinCard", () => {
     expect(screen.getByText("720 mm")).toBeTruthy();
     expect(screen.getByText("Preview 790 mm")).toBeTruthy();
     expect(screen.getByText("Awaiting approval")).toBeTruthy();
+    expect(screen.getByText("RAPIER PHYSICS")).toBeTruthy();
+    expect(screen.getByText("Kinematic actuator")).toBeTruthy();
+    expect(screen.getByText("Gravity + collisions")).toBeTruthy();
     expect(await screen.findByTestId("workstation-scene")).toBeTruthy();
   });
 

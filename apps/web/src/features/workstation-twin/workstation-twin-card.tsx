@@ -43,15 +43,18 @@ export function WorkstationTwinCard({
     <Card className="overflow-hidden">
       <CardHeader className="flex-row items-start justify-between gap-4">
         <div>
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <CardTitle>Workstation digital twin</CardTitle>
             <Badge variant="outline" className="font-mono text-[0.65rem]">
               THREE.JS
             </Badge>
+            <Badge variant="outline" className="font-mono text-[0.65rem]">
+              RAPIER PHYSICS
+            </Badge>
           </div>
           <CardDescription>
-            Rendered from verified runtime state; previews never command a
-            device.
+            Rust telemetry drives the actuator; Rapier simulates gravity and
+            contact without becoming device truth.
           </CardDescription>
         </div>
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40">
@@ -84,6 +87,14 @@ export function WorkstationTwinCard({
               <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-lg border border-white/10 bg-black/35 px-2.5 py-1.5 text-xs text-white/80 backdrop-blur-sm">
                 <Eye className="size-3.5" aria-hidden="true" />
                 Drag to orbit · Scroll to zoom
+              </div>
+              <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-2 text-[0.65rem] text-white/75">
+                <span className="rounded-md border border-white/10 bg-black/35 px-2 py-1 backdrop-blur-sm">
+                  Kinematic actuator
+                </span>
+                <span className="rounded-md border border-white/10 bg-black/35 px-2 py-1 backdrop-blur-sm">
+                  Gravity + collisions
+                </span>
               </div>
             </div>
 

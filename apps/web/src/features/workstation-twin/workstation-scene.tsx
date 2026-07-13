@@ -1,7 +1,14 @@
 import { Grid, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
+import {
+  BallCollider,
+  CuboidCollider,
+  Physics,
+  type RapierRigidBody,
+  RigidBody,
+} from "@react-three/rapier";
 import { useRef } from "react";
-import { type Group, MathUtils } from "three";
+import { MathUtils } from "three";
 
 const camera = {
   position: [4.8, 3.2, 5.6] as [number, number, number],
@@ -9,6 +16,11 @@ const camera = {
 };
 const pixelRatio: [number, number] = [1, 1.75];
 const renderer = { antialias: true };
+const gravity: [number, number, number] = [0, -9.81, 0];
+const tabletopCollider: [number, number, number] = [1.65, 0.07, 0.775];
+const floorCollider: [number, number, number] = [6, 0.05, 6];
+const floorPosition: [number, number, number] = [0, -0.05, 0];
+const payloadCollider: [number] = [0.14];
 
 interface WorkstationSceneProps {
   confirmedHeightMm: number;
@@ -23,7 +35,7 @@ export function WorkstationScene({
 }: WorkstationSceneProps) {
   return (
     <Canvas
-      aria-label="Interactive 3D workstation digital twin"
+      aria-label="Interactive physics-enabled workstation digital twin"
       camera={camera}
       dpr={pixelRatio}
       gl={renderer}
@@ -34,11 +46,22 @@ export function WorkstationScene({
       <directionalLight castShadow intensity={3.2} position={[3.5, 6, 4]} />
       <directionalLight intensity={1.1} position={[-4, 2, -3]} />
 
-      <Desk
-        confirmedHeightMm={confirmedHeightMm}
-        previewHeightMm={previewHeightMm}
-        uncertain={uncertain}
-      />
+      <Physics
+        colliders={false}
+        gravity={gravity}
+        maxCcdSubsteps={4}
+        timeStep={1 / 60}
+      >
+        <Desk
+          confirmedHeightMm={confirmedHeightMm}
+          previewHeightMm={previewHeightMm}
+          uncertain={uncertain}
+        />
+        <DynamicPayload initialDeskHeightMm={confirmedHeightMm} />
+        <RigidBody type="fixed" colliders={false}>
+          <CuboidCollider args={floorCollider} position={floorPosition} />
+        </RigidBody>
+      </Physics>
       <Chair />
       <Grid
         args={[12, 12]}
@@ -71,8 +94,13 @@ interface DeskProps {
 }
 
 function Desk({ confirmedHeightMm, previewHeightMm, uncertain }: DeskProps) {
-  const movingAssembly = useRef<Group>(null);
+  const movingAssembly = useRef<RapierRigidBody>(null);
   const renderedHeight = useRef(sceneHeight(confirmedHeightMm));
+  const initialPosition = useRef<[number, number, number]>([
+    0,
+    renderedHeight.current,
+    0,
+  ]).current;
 
   useFrame((_, delta) => {
     renderedHeight.current = MathUtils.damp(
@@ -81,15 +109,24 @@ function Desk({ confirmedHeightMm, previewHeightMm, uncertain }: DeskProps) {
       4.5,
       delta,
     );
-    if (movingAssembly.current) {
-      movingAssembly.current.position.y = renderedHeight.current;
-    }
+    movingAssembly.current?.setNextKinematicTranslation({
+      x: 0,
+      y: renderedHeight.current,
+      z: 0,
+    });
   });
 
   return (
     <group position={[0, 0, 0]}>
       <DeskFeet />
-      <group ref={movingAssembly} position={[0, renderedHeight.current, 0]}>
+      <RigidBody
+        ref={movingAssembly}
+        type="kinematicPosition"
+        colliders={false}
+        friction={0.9}
+        position={initialPosition}
+      >
+        <CuboidCollider args={tabletopCollider} />
         <mesh castShadow receiveShadow>
           <boxGeometry args={[3.3, 0.14, 1.55]} />
           <meshStandardMaterial
@@ -103,7 +140,7 @@ function Desk({ confirmedHeightMm, previewHeightMm, uncertain }: DeskProps) {
           <boxGeometry args={[0.64, 0.035, 0.28]} />
           <meshStandardMaterial color="#242b29" roughness={0.6} />
         </mesh>
-      </group>
+      </RigidBody>
 
       {previewHeightMm !== undefined && (
         <mesh position={[0, sceneHeight(previewHeightMm), 0]}>
@@ -117,6 +154,41 @@ function Desk({ confirmedHeightMm, previewHeightMm, uncertain }: DeskProps) {
         </mesh>
       )}
     </group>
+  );
+}
+
+function DynamicPayload({
+  initialDeskHeightMm,
+}: {
+  initialDeskHeightMm: number;
+}) {
+  const initialPosition = useRef<[number, number, number]>([
+    1.05,
+    sceneHeight(initialDeskHeightMm) + 0.25,
+    0.18,
+  ]).current;
+
+  return (
+    <RigidBody
+      ccd
+      colliders={false}
+      position={initialPosition}
+      restitution={0.22}
+      friction={1}
+      linearDamping={0.35}
+      angularDamping={0.25}
+    >
+      <BallCollider args={payloadCollider} />
+      <mesh castShadow>
+        <sphereGeometry args={[0.14, 24, 24]} />
+        <meshStandardMaterial
+          color="#f2b94b"
+          emissive="#6b4107"
+          emissiveIntensity={0.22}
+          roughness={0.6}
+        />
+      </mesh>
+    </RigidBody>
   );
 }
 
