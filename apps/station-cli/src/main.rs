@@ -66,7 +66,8 @@ fn run_rpc_mode(database: &Path) -> ExitCode {
             )
             .into());
         }
-        let request = serde_json::from_str(&input)?;
+        let request =
+            serde_json::from_str(&input).map_err(station_cli::DemoError::InvalidRpcRequest)?;
         station_cli::run_rpc(database, authority, request, &mut io::stdout())
     })();
 
@@ -76,7 +77,7 @@ fn run_rpc_mode(database: &Path) -> ExitCode {
             let response = serde_json::json!({
                 "ok": false,
                 "error": {
-                    "code": "station_rpc_error",
+                    "code": error.rpc_code(),
                     "message": error.to_string()
                 }
             });

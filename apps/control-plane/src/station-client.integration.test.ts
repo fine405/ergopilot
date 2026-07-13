@@ -18,6 +18,84 @@ afterEach(async () => {
 });
 
 describe("ProcessStationClient", () => {
+  it("returns a stable code when a task run does not exist", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-missing-run-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+
+    await expect(client.inspectTask("run-missing")).rejects.toMatchObject({
+      code: "run_not_found",
+    });
+  });
+
+  it("preserves stable semantic error codes across the process boundary", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-forbidden-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-forbidden",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 790 },
+          },
+        },
+      ],
+    };
+
+    await expect(
+      client.startTask(
+        { ...task, taskId: "task-process-client-invalid", steps: [] },
+        900,
+      ),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+
+    const awaiting = await client.startTask(task, 1_000);
+
+    await expect(
+      client.approveTask(awaiting.runId, "user-2", 1_100),
+    ).rejects.toMatchObject({ code: "forbidden" });
+
+    await expect(
+      client.startTask(
+        {
+          ...task,
+          steps: [
+            {
+              stepId: "desk-1",
+              action: {
+                type: "desk.move_to_height",
+                input: { heightMm: 800 },
+              },
+            },
+          ],
+        },
+        1_200,
+      ),
+    ).rejects.toMatchObject({ code: "task_conflict" });
+
+    await expect(
+      client.approveTask(awaiting.runId, "user-1", 61_000),
+    ).rejects.toMatchObject({ code: "approval_expired" });
+  });
+
   it("runs the browser control path against the real Rust runtime", async () => {
     const directory = await mkdtemp(join(tmpdir(), "ergopilot-control-plane-"));
     temporaryDirectories.push(directory);
@@ -190,6 +268,9 @@ describe("ProcessStationClient", () => {
         1_100,
       );
     const afterSuspension = await client.stationSnapshot(1_150);
+    await expect(
+      client.reconcileTask(awaiting.runId, 1_175),
+    ).rejects.toMatchObject({ code: "invalid_transition" });
     const resumed = await client.resumeTask(awaiting.runId, 1_200);
     const finalSnapshot = await client.stationSnapshot(1_250);
 

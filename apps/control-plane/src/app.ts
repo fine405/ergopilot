@@ -21,8 +21,11 @@ import {
   type PlannerAttemptStore,
   PlannerAttemptStoreError,
 } from "./planner-attempt-store";
-import type { StationClient } from "./station-client";
-import { StationRpcError } from "./station-client";
+import {
+  type StationClient,
+  StationRpcError,
+  type StationRpcErrorCode,
+} from "./station-client";
 import {
   describePlannerProviders,
   PLANNER_PROVIDERS,
@@ -46,6 +49,33 @@ type AppEnvironment = {
 };
 
 type EmptyHookResponse = Record<never, never>;
+
+function stationRpcStatus(
+  code: StationRpcErrorCode,
+): 400 | 403 | 404 | 409 | 502 | 503 | 504 {
+  switch (code) {
+    case "invalid_request":
+      return 400;
+    case "forbidden":
+      return 403;
+    case "run_not_found":
+      return 404;
+    case "task_conflict":
+    case "invalid_transition":
+    case "approval_expired":
+      return 409;
+    case "device_unavailable":
+      return 503;
+    case "timeout":
+      return 504;
+    case "station_rpc_error":
+    case "output_limit":
+    case "spawn_failed":
+    case "unexpected_exit":
+    case "invalid_response":
+      return 502;
+  }
+}
 
 export function createApp(station: StationClient, options: AppOptions = {}) {
   const now = options.now ?? Date.now;
@@ -349,7 +379,7 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     if (error instanceof StationRpcError) {
       return context.json(
         { error: { code: error.code, message: error.message } },
-        502,
+        stationRpcStatus(error.code),
       );
     }
     return context.json(

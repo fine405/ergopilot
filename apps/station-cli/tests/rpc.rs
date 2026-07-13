@@ -1,11 +1,12 @@
 use policy_core::PolicyAuthority;
 use serde_json::{json, Value};
-use station_cli::{run_rpc, RpcRequest, MAX_RPC_INPUT_BYTES};
+use station_cli::{run_rpc, DemoError, RpcRequest, MAX_RPC_INPUT_BYTES};
+use station_core::{DeviceError, RuntimeError};
 use std::{
-    io::Write,
+    io::{self, Write},
     process::{Command, Stdio},
 };
-use task_runtime::TaskSpec;
+use task_runtime::{TaskRuntimeError, TaskSpec};
 
 #[test]
 fn rpc_request_has_a_stable_cross_process_json_contract() {
@@ -52,6 +53,35 @@ fn resume_request_has_a_stable_cross_process_json_contract() {
                 "nowMs": 1_200
             }
         })
+    );
+}
+
+#[test]
+fn rpc_error_codes_cover_transition_availability_and_fallback_categories() {
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::RunNotApprovable {
+            run_id: "run-denied".into(),
+        })
+        .rpc_code(),
+        "invalid_transition"
+    );
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::PendingCommandNotFound {
+            run_id: "run-suspended".into(),
+        })
+        .rpc_code(),
+        "invalid_transition"
+    );
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::Station(RuntimeError::Device(
+            DeviceError::unavailable("device is offline"),
+        )))
+        .rpc_code(),
+        "device_unavailable"
+    );
+    assert_eq!(
+        DemoError::Io(io::Error::other("unexpected I/O failure")).rpc_code(),
+        "station_rpc_error"
     );
 }
 
@@ -316,26 +346,12 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
 fn rpc_process_rejects_input_larger_than_the_protocol_limit() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("oversized.sqlite");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_station-cli"))
-        .arg("--rpc")
-        .arg(&database)
-        .env("ERGOPILOT_POLICY_KEY", "ergopilot-test-policy-key")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(&vec![b'x'; MAX_RPC_INPUT_BYTES as usize + 1])
-        .unwrap();
-
-    let output = child.wait_with_output().unwrap();
+    let output = invoke_process(&database, &vec![b'x'; MAX_RPC_INPUT_BYTES as usize + 1]);
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert!(!output.status.success());
     assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "invalid_request");
     assert!(response["error"]["message"]
         .as_str()
         .unwrap()
@@ -343,8 +359,33 @@ fn rpc_process_rejects_input_larger_than_the_protocol_limit() {
     assert!(!database.exists());
 }
 
+#[test]
+fn rpc_process_rejects_an_unknown_method_as_an_invalid_request() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("unknown-method.sqlite");
+    let output = invoke_process(&database, br#"{"method":"task.unknown","params":{}}"#);
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(response["error"]["code"], "invalid_request");
+    assert!(!database.exists());
+}
+
 fn invoke(database: &std::path::Path, authority: &PolicyAuthority, request: RpcRequest) -> Value {
     let mut output = Vec::new();
     run_rpc(database, authority.clone(), request, &mut output).unwrap();
     serde_json::from_slice(&output).unwrap()
+}
+
+fn invoke_process(database: &std::path::Path, input: &[u8]) -> std::process::Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_station-cli"))
+        .arg("--rpc")
+        .arg(database)
+        .env("ERGOPILOT_POLICY_KEY", "ergopilot-test-policy-key")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input).unwrap();
+    child.wait_with_output().unwrap()
 }

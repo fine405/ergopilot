@@ -61,17 +61,38 @@ type RpcRequest =
   | { method: "task.reconcile"; params: { runId: string; nowMs: number } }
   | { method: "station.snapshot"; params: { observedAtMs: number } };
 
+const stationRpcErrorCodeSchema = z.enum([
+  "invalid_request",
+  "forbidden",
+  "run_not_found",
+  "task_conflict",
+  "invalid_transition",
+  "approval_expired",
+  "device_unavailable",
+  "station_rpc_error",
+  "output_limit",
+  "timeout",
+  "spawn_failed",
+  "unexpected_exit",
+  "invalid_response",
+]);
+
+export type StationRpcErrorCode = z.infer<typeof stationRpcErrorCodeSchema>;
+
 const rpcEnvelopeSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), result: z.unknown() }),
   z.object({
     ok: z.literal(false),
-    error: z.object({ code: z.string(), message: z.string() }),
+    error: z.object({
+      code: stationRpcErrorCodeSchema,
+      message: z.string(),
+    }),
   }),
 ]);
 
 export class StationRpcError extends Error {
   constructor(
-    readonly code: string,
+    readonly code: StationRpcErrorCode,
     message: string,
   ) {
     super(message);

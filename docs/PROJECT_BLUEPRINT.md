@@ -397,7 +397,7 @@ slices.
 
 | Error | Retry behavior | Required action |
 | --- | --- | --- |
-| `validation_error` | Never | Fix caller or schema |
+| `invalid_request` | Never | Fix caller or schema |
 | `policy_denied` | Never | Explain denial or change policy explicitly |
 | `approval_expired` | Never automatically | Request a new approval |
 | `stale_state` | After refreshing state | Re-plan if assumptions changed |
@@ -406,6 +406,13 @@ slices.
 | `actuator_fault` | Device-specific | Stop, verify and possibly compensate |
 | `transport_interrupted` | Resume delivery | Preserve command identity |
 | `runtime_restarted` | Recover from journal | Reconcile all non-terminal commands |
+
+The current local station boundary uses a closed RPC error-code contract.
+Caller and authorization failures map to HTTP 400/403/404, task-state
+conflicts to 409, device unavailability to 503, process timeouts to 504, and
+other station transport failures to 502. The control plane validates the code
+before forwarding it, so an unknown station response becomes
+`invalid_response` instead of leaking an arbitrary string through the API.
 
 ## 9. Simulator
 

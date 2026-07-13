@@ -41,6 +41,8 @@ runnable end to end. The current slice implements:
   unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
+- stable station RPC error codes that preserve caller, authorization, task
+  state, availability and transport semantics through the Hono API;
 - an optional Mastra planner that converts natural language into a bounded,
   server-validated `TaskSpec` without receiving execution authority;
 - server-owned timestamps and schema validation at the API boundary;

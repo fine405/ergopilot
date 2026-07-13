@@ -5,7 +5,7 @@ use ergopilot_protocol::{
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use station_core::{RuntimeError, StationRuntime};
+use station_core::{DeviceErrorKind, RuntimeError, StationRuntime};
 use std::{
     ffi::OsString,
     fs,
@@ -49,10 +49,42 @@ pub enum DemoError {
     Io(#[from] io::Error),
     #[error(transparent)]
     Serialization(#[from] serde_json::Error),
+    #[error("invalid station RPC request: {0}")]
+    InvalidRpcRequest(serde_json::Error),
     #[error("recovery did not find the uncertain command")]
     MissingRecoveredCommand,
     #[error("refusing to overwrite unmarked database at {path}")]
     RefusingToOverwrite { path: PathBuf },
+}
+
+impl DemoError {
+    pub fn rpc_code(&self) -> &'static str {
+        match self {
+            Self::InvalidRpcRequest(_) => "invalid_request",
+            Self::Io(error) if error.kind() == io::ErrorKind::InvalidData => "invalid_request",
+            Self::Task(TaskRuntimeError::Station(RuntimeError::Device(error)))
+            | Self::Runtime(RuntimeError::Device(error))
+                if error.kind() == DeviceErrorKind::Unavailable =>
+            {
+                "device_unavailable"
+            }
+            Self::Task(
+                TaskRuntimeError::UnsupportedTaskSchemaVersion { .. }
+                | TaskRuntimeError::InvalidTaskSpec { .. },
+            ) => "invalid_request",
+            Self::Task(TaskRuntimeError::RunNotFound { .. }) => "run_not_found",
+            Self::Task(TaskRuntimeError::UnauthorizedApprover { .. }) => "forbidden",
+            Self::Task(TaskRuntimeError::TaskIdConflict { .. }) => "task_conflict",
+            Self::Task(TaskRuntimeError::ApprovalExpired { .. }) => "approval_expired",
+            Self::Task(
+                TaskRuntimeError::RunNotApprovable { .. }
+                | TaskRuntimeError::PendingCommandNotFound { .. }
+                | TaskRuntimeError::RunNotReconcilable { .. }
+                | TaskRuntimeError::RunNotResumable { .. },
+            ) => "invalid_transition",
+            _ => "station_rpc_error",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

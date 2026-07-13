@@ -9,7 +9,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "./app";
 import { createMemoryPlannerAttemptStore } from "./planner-attempt-store";
-import type { StationClient } from "./station-client";
+import {
+  type StationClient,
+  StationRpcError,
+  type StationRpcErrorCode,
+} from "./station-client";
 import { PlannerError, type TaskPlanner } from "./task-planner";
 
 const awaitingRun: TaskRunView = {
@@ -710,6 +714,37 @@ describe("control-plane API", () => {
     expect(response.status).toBe(200);
     expect(station.resumeTask).toHaveBeenCalledWith("run-task-api-1", 1_200);
     expect(station.reconcileTask).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["invalid_request", 400],
+    ["forbidden", 403],
+    ["run_not_found", 404],
+    ["task_conflict", 409],
+    ["invalid_transition", 409],
+    ["approval_expired", 409],
+    ["device_unavailable", 503],
+    ["station_rpc_error", 502],
+    ["output_limit", 502],
+    ["timeout", 504],
+    ["spawn_failed", 502],
+    ["unexpected_exit", 502],
+    ["invalid_response", 502],
+  ] satisfies ReadonlyArray<
+    readonly [StationRpcErrorCode, number]
+  >)("maps station error %s to HTTP %i", async (code, status) => {
+    const station = fakeStation();
+    station.inspectTask = vi.fn(async () => {
+      throw new StationRpcError(code, "station request failed");
+    });
+    const app = createApp(station);
+
+    const response = await app.request("/api/task-runs/run-test");
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({
+      error: { code, message: "station request failed" },
+    });
   });
 
   it("keeps uncertain-outcome reconciliation on its own route", async () => {
