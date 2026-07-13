@@ -401,7 +401,8 @@ slices.
 | `policy_denied` | Never | Explain denial or change policy explicitly |
 | `approval_expired` | Never automatically | Request a new approval |
 | `stale_state` | After refreshing state | Re-plan if assumptions changed |
-| `device_unavailable` | Bounded backoff | Suspend after retry budget |
+| `device_unavailable` | Operator-triggered, at most three attempts | Keep the run suspended between attempts |
+| `recovery_budget_exhausted` | Never automatically | Inspect the device and create a fresh run after recovery |
 | `command_timeout` | Do not blindly retry | Reconcile actual device state |
 | `actuator_fault` | Device-specific | Stop, verify and possibly compensate |
 | `transport_interrupted` | Resume delivery | Preserve command identity |

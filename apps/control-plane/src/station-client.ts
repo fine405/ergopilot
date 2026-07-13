@@ -68,6 +68,7 @@ const stationRpcErrorCodeSchema = z.enum([
   "task_conflict",
   "invalid_transition",
   "approval_expired",
+  "recovery_budget_exhausted",
   "device_unavailable",
   "station_rpc_error",
   "output_limit",

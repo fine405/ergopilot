@@ -3,11 +3,13 @@ use ergopilot_protocol::{
     PolicyGrant, PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use station_core::{DeviceAdapter, DeviceErrorKind, RuntimeError, StationRuntime};
 use std::path::Path;
 use thiserror::Error;
+
+const MAX_RECOVERY_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +128,7 @@ pub enum TaskEventType {
     RunFailed,
     PolicyDenied,
     RunReconciled,
+    RunResumeAttempted,
     RunResumed,
     RunSuspended,
 }
@@ -143,6 +146,7 @@ impl TaskEventType {
             Self::RunFailed => "run_failed",
             Self::PolicyDenied => "policy_denied",
             Self::RunReconciled => "run_reconciled",
+            Self::RunResumeAttempted => "run_resume_attempted",
             Self::RunResumed => "run_resumed",
             Self::RunSuspended => "run_suspended",
         }
@@ -204,6 +208,8 @@ pub enum TaskRuntimeError {
     RunNotReconcilable { run_id: String },
     #[error("task run {run_id} is not resumable")]
     RunNotResumable { run_id: String },
+    #[error("task run {run_id} exhausted its {max_attempts} recovery attempts")]
+    RecoveryBudgetExhausted { run_id: String, max_attempts: usize },
     #[error("automatic allow is not implemented for this task goal")]
     UnsupportedAutomaticAllow,
     #[error("approval expired at {expires_at_ms}, current time is {now_ms}")]
@@ -223,6 +229,16 @@ struct StoredRun {
     view: TaskRunView,
     command: Option<DeviceCommand>,
     grant: Option<PolicyGrant>,
+}
+
+enum ContinuationUpdate {
+    Suspended(SuspensionReason),
+    CommandResult {
+        status: TaskRunStatus,
+        event_type: TaskEventType,
+        command: CommandView,
+        command_events: Vec<CommandEvent>,
+    },
 }
 
 impl<D: DeviceAdapter> TaskRuntime<D> {
@@ -487,12 +503,76 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     }
 
     pub fn resume(&mut self, run_id: &str, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
-        let stored = self.load_run(run_id)?;
+        let current = self.load_run(run_id)?;
+        if matches!(
+            current.view.status,
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
+        ) {
+            return Ok(current.view);
+        }
+        if current.view.status != TaskRunStatus::Suspended
+            || current.view.suspension_reason != Some(SuspensionReason::DeviceUnavailable)
+        {
+            return Err(TaskRuntimeError::RunNotResumable {
+                run_id: run_id.into(),
+            });
+        }
+        if let Some(command) = &current.command {
+            if let Some(command_view) = self.station.inspect_command(command)? {
+                let (status, event_type) =
+                    task_outcome(command_view.status, TaskEventType::RunResumed);
+                let command_events = self.station.events(&command.command_id)?;
+                let (view, _) = self.commit_continuation_update(
+                    run_id,
+                    current.view.status,
+                    current.view.suspension_reason,
+                    ContinuationUpdate::CommandResult {
+                        status,
+                        event_type,
+                        command: command_view,
+                        command_events,
+                    },
+                    now_ms,
+                )?;
+                return Ok(view);
+            }
+        }
+        let mut stored = self.reserve_resume_attempt(run_id, now_ms)?;
         if matches!(
             stored.view.status,
             TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
         ) {
+            self.refresh_command_events(&mut stored)?;
             return Ok(stored.view);
+        }
+        self.continue_run(stored, now_ms, TaskEventType::RunResumed)
+    }
+
+    fn reserve_resume_attempt(
+        &mut self,
+        run_id: &str,
+        now_ms: u64,
+    ) -> Result<StoredRun, TaskRuntimeError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.into(),
+            })?;
+        let mut stored = deserialize_stored_run(run_id, &stored_json)?;
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
+        ) {
+            transaction.commit()?;
+            return Ok(stored);
         }
         if stored.view.status != TaskRunStatus::Suspended
             || stored.view.suspension_reason != Some(SuspensionReason::DeviceUnavailable)
@@ -501,15 +581,39 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 run_id: run_id.into(),
             });
         }
-        self.continue_run(stored, now_ms, TaskEventType::RunResumed)
+        let attempt_count = stored
+            .view
+            .events
+            .iter()
+            .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+            .count();
+        if attempt_count >= MAX_RECOVERY_ATTEMPTS {
+            return Err(TaskRuntimeError::RecoveryBudgetExhausted {
+                run_id: run_id.into(),
+                max_attempts: MAX_RECOVERY_ATTEMPTS,
+            });
+        }
+        append_event(&mut stored.view, TaskEventType::RunResumeAttempted, now_ms);
+        let stored_json = serde_json::to_string(&stored)?;
+        transaction.execute(
+            "UPDATE task_runs
+             SET stored_json = ?1, updated_at_ms = ?2
+             WHERE run_id = ?3",
+            params![stored_json, now_ms, run_id],
+        )?;
+        transaction.commit()?;
+        Ok(stored)
     }
 
     fn continue_run(
         &mut self,
-        mut stored: StoredRun,
+        stored: StoredRun,
         now_ms: u64,
         completed_event: TaskEventType,
     ) -> Result<TaskRunView, TaskRuntimeError> {
+        let run_id = stored.view.run_id.clone();
+        let expected_status = stored.view.status;
+        let expected_reason = stored.view.suspension_reason;
         let (command, grant) = match (&stored.command, &stored.grant) {
             (Some(command), Some(grant)) => (command.clone(), grant.clone()),
             _ => {
@@ -522,21 +626,27 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         let command_view = match self.station.resume_command(command.clone(), &grant, now_ms) {
             Ok(command_view) => command_view,
             Err(RuntimeError::StaleState { .. }) => {
-                stored.view.status = TaskRunStatus::Suspended;
-                stored.view.suspension_reason = Some(SuspensionReason::StaleState);
-                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
-                self.save_run(&stored, now_ms)?;
-                return Ok(stored.view);
+                let (view, _) = self.commit_continuation_update(
+                    &run_id,
+                    expected_status,
+                    expected_reason,
+                    ContinuationUpdate::Suspended(SuspensionReason::StaleState),
+                    now_ms,
+                )?;
+                return Ok(view);
             }
             Err(
                 RuntimeError::ExpiredCommand { .. }
                 | RuntimeError::Policy(PolicyError::Expired { .. }),
             ) => {
-                stored.view.status = TaskRunStatus::Suspended;
-                stored.view.suspension_reason = Some(SuspensionReason::Expired);
-                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
-                self.save_run(&stored, now_ms)?;
-                return Ok(stored.view);
+                let (view, _) = self.commit_continuation_update(
+                    &run_id,
+                    expected_status,
+                    expected_reason,
+                    ContinuationUpdate::Suspended(SuspensionReason::Expired),
+                    now_ms,
+                )?;
+                return Ok(view);
             }
             Err(error @ RuntimeError::Device(_)) => {
                 let unavailable = matches!(
@@ -548,11 +658,14 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     device_error = Some(error);
                     command_view
                 } else if unavailable {
-                    stored.view.status = TaskRunStatus::Suspended;
-                    stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
-                    append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
-                    self.save_run(&stored, now_ms)?;
-                    return Ok(stored.view);
+                    let (view, _) = self.commit_continuation_update(
+                        &run_id,
+                        expected_status,
+                        expected_reason,
+                        ContinuationUpdate::Suspended(SuspensionReason::DeviceUnavailable),
+                        now_ms,
+                    )?;
+                    return Ok(view);
                 } else {
                     return Err(error.into());
                 }
@@ -560,25 +673,78 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             Err(error) => return Err(error.into()),
         };
 
-        let (status, event_type) = match command_view.status {
-            CommandStatus::Succeeded => (TaskRunStatus::Completed, completed_event),
-            CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
-            CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
-                (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
-            }
-        };
-        stored.view.status = status;
-        stored.view.suspension_reason = None;
-        stored.view.command = Some(command_view);
-        self.refresh_command_events(&mut stored)?;
-        append_event_once(&mut stored.view, event_type, now_ms);
-        self.save_run(&stored, now_ms)?;
-        if status == TaskRunStatus::Failed {
+        let (status, event_type) = task_outcome(command_view.status, completed_event);
+        let command_events = self.station.events(&command.command_id)?;
+        let (view, update_applied) = self.commit_continuation_update(
+            &run_id,
+            expected_status,
+            expected_reason,
+            ContinuationUpdate::CommandResult {
+                status,
+                event_type,
+                command: command_view,
+                command_events,
+            },
+            now_ms,
+        )?;
+        if update_applied && status == TaskRunStatus::Failed {
             if let Some(error) = device_error {
                 return Err(error.into());
             }
         }
-        Ok(stored.view)
+        Ok(view)
+    }
+
+    fn commit_continuation_update(
+        &mut self,
+        run_id: &str,
+        expected_status: TaskRunStatus,
+        expected_reason: Option<SuspensionReason>,
+        update: ContinuationUpdate,
+        now_ms: u64,
+    ) -> Result<(TaskRunView, bool), TaskRuntimeError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction.query_row(
+            "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+            params![run_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        let mut stored = deserialize_stored_run(run_id, &stored_json)?;
+        if stored.view.status != expected_status || stored.view.suspension_reason != expected_reason
+        {
+            transaction.commit()?;
+            return Ok((stored.view, false));
+        }
+        match update {
+            ContinuationUpdate::Suspended(reason) => {
+                stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(reason);
+                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+            }
+            ContinuationUpdate::CommandResult {
+                status,
+                event_type,
+                command,
+                command_events,
+            } => {
+                stored.view.status = status;
+                stored.view.suspension_reason = None;
+                stored.view.command = Some(command);
+                stored.view.command_events = command_events;
+                append_event_once(&mut stored.view, event_type, now_ms);
+            }
+        }
+        let stored_json = serde_json::to_string(&stored)?;
+        transaction.execute(
+            "UPDATE task_runs
+             SET stored_json = ?1, updated_at_ms = ?2
+             WHERE run_id = ?3",
+            params![stored_json, now_ms, run_id],
+        )?;
+        transaction.commit()?;
+        Ok((stored.view, true))
     }
 
     fn load_run(&self, run_id: &str) -> Result<StoredRun, TaskRuntimeError> {
@@ -713,6 +879,19 @@ fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
         });
     }
     Ok(())
+}
+
+fn task_outcome(
+    command_status: CommandStatus,
+    completed_event: TaskEventType,
+) -> (TaskRunStatus, TaskEventType) {
+    match command_status {
+        CommandStatus::Succeeded => (TaskRunStatus::Completed, completed_event),
+        CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
+        CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
+            (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
+        }
+    }
 }
 
 fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {

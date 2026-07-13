@@ -2,7 +2,11 @@ use device_sim::{NextFault, SqliteSimulator};
 use ergopilot_protocol::{DeviceAction, WorkstationSnapshot};
 use policy_core::PolicyAuthority;
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::{
+    panic::{catch_unwind, AssertUnwindSafe},
+    sync::{Arc, Barrier},
+    thread,
+};
 use task_runtime::{SuspensionReason, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
 
 struct CrashBeforeStationJournal {
@@ -17,6 +21,15 @@ struct ReadbackFailureDevice {
 
 struct ApplyFailureDevice {
     snapshot: WorkstationSnapshot,
+}
+
+struct CrashOnSnapshot;
+
+struct BlockingSimulator {
+    simulator: SqliteSimulator,
+    entered: Arc<Barrier>,
+    release: Arc<Barrier>,
+    block_next_snapshot: bool,
 }
 
 impl ApplyFailureDevice {
@@ -93,6 +106,38 @@ impl DeviceAdapter for CrashBeforeStationJournal {
         self.snapshot_calls += 1;
         if self.snapshot_calls == 2 {
             panic!("simulated process crash before the station journal write");
+        }
+        self.simulator.snapshot(observed_at_ms)
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        self.simulator.apply(action, expected_state_version)
+    }
+}
+
+impl DeviceAdapter for CrashOnSnapshot {
+    fn snapshot(&mut self, _observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        panic!("simulated crash after reserving the resume attempt");
+    }
+
+    fn apply(
+        &mut self,
+        _action: &DeviceAction,
+        _expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        unreachable!("snapshot must run before apply");
+    }
+}
+
+impl DeviceAdapter for BlockingSimulator {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        if std::mem::take(&mut self.block_next_snapshot) {
+            self.entered.wait();
+            self.release.wait();
         }
         self.simulator.snapshot(observed_at_ms)
     }
@@ -208,6 +253,219 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
             .movement_count,
         1
     );
+}
+
+#[test]
+fn resume_attempts_are_persisted_and_bounded_across_restarts() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-bounded-resume", "user-1", 795),
+            1_000,
+        )
+        .unwrap();
+    drop(first_process);
+
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+    let mut unavailable_process =
+        TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let suspended = unavailable_process
+        .approve(&awaiting.run_id, "user-1", 1_100)
+        .unwrap();
+    assert_eq!(suspended.status, TaskRunStatus::Suspended);
+    drop(unavailable_process);
+
+    let mut crashing_process =
+        TaskRuntime::open(&database, CrashOnSnapshot, authority.clone()).unwrap();
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        crashing_process.resume(&awaiting.run_id, 1_200).unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(crashing_process);
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let persisted = TaskRuntime::open(&database, simulator, authority.clone())
+        .unwrap()
+        .inspect(&awaiting.run_id)
+        .unwrap();
+    assert_eq!(
+        persisted
+            .events
+            .iter()
+            .filter(|event| event.event_type.as_str() == "run_resume_attempted")
+            .count(),
+        1
+    );
+
+    for attempt in 2..=3 {
+        let mut simulator = SqliteSimulator::open(&database).unwrap();
+        simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+        let mut runtime = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+
+        let still_suspended = runtime
+            .resume(&awaiting.run_id, 1_100 + attempt * 100)
+            .unwrap();
+
+        assert_eq!(still_suspended.status, TaskRunStatus::Suspended);
+        assert_eq!(
+            still_suspended
+                .events
+                .iter()
+                .filter(|event| event.event_type.as_str() == "run_resume_attempted")
+                .count(),
+            attempt as usize
+        );
+    }
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut exhausted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let error = exhausted.resume(&awaiting.run_id, 1_500).unwrap_err();
+
+    assert!(matches!(
+        error,
+        TaskRuntimeError::RecoveryBudgetExhausted {
+            max_attempts: 3,
+            ..
+        }
+    ));
+    assert_eq!(exhausted.station_snapshot(1_501).unwrap().movement_count, 0);
+}
+
+#[test]
+fn concurrent_resume_completion_preserves_later_attempt_reservations() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-concurrent-resume", "user-1", 795),
+            1_000,
+        )
+        .unwrap();
+    drop(first_process);
+
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+    let mut unavailable_process =
+        TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    unavailable_process
+        .approve(&awaiting.run_id, "user-1", 1_100)
+        .unwrap();
+    drop(unavailable_process);
+
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let blocked_database = database.clone();
+    let blocked_run_id = awaiting.run_id.clone();
+    let blocked_entered = Arc::clone(&entered);
+    let blocked_release = Arc::clone(&release);
+    let blocked_resume = thread::spawn(move || {
+        let simulator = SqliteSimulator::open(&blocked_database).unwrap();
+        let device = BlockingSimulator {
+            simulator,
+            entered: blocked_entered,
+            release: blocked_release,
+            block_next_snapshot: true,
+        };
+        let mut runtime = TaskRuntime::open(&blocked_database, device, policy_authority()).unwrap();
+        runtime.resume(&blocked_run_id, 1_200).unwrap()
+    });
+    entered.wait();
+
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+    let mut concurrent = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let still_suspended = concurrent.resume(&awaiting.run_id, 1_250).unwrap();
+    assert_eq!(still_suspended.status, TaskRunStatus::Suspended);
+    drop(concurrent);
+
+    release.wait();
+    let completed = blocked_resume.join().unwrap();
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut inspected = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let final_run = inspected.inspect(&awaiting.run_id).unwrap();
+    assert_eq!(
+        final_run
+            .events
+            .iter()
+            .filter(|event| event.event_type.as_str() == "run_resume_attempted")
+            .count(),
+        2
+    );
+    assert_eq!(inspected.station_snapshot(1_300).unwrap().movement_count, 1);
+}
+
+#[test]
+fn terminal_station_replay_after_task_save_failure_does_not_consume_an_attempt() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-terminal-resume-replay", "user-1", 795),
+            1_000,
+        )
+        .unwrap();
+    drop(first_process);
+
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+    let mut unavailable_process =
+        TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    unavailable_process
+        .approve(&awaiting.run_id, "user-1", 1_100)
+        .unwrap();
+    drop(unavailable_process);
+
+    let fault_connection = rusqlite::Connection::open(&database).unwrap();
+    fault_connection
+        .execute_batch(
+            r#"
+            CREATE TRIGGER fail_resumed_task_save
+            BEFORE UPDATE ON task_runs
+            WHEN instr(NEW.stored_json, '"status":"completed"') > 0
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated crash before resumed task result save');
+            END;
+            "#,
+        )
+        .unwrap();
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut failed_save = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    assert!(matches!(
+        failed_save.resume(&awaiting.run_id, 1_200),
+        Err(TaskRuntimeError::Storage(_))
+    ));
+    drop(failed_save);
+    fault_connection
+        .execute_batch("DROP TRIGGER fail_resumed_task_save;")
+        .unwrap();
+    drop(fault_connection);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let completed = restarted.resume(&awaiting.run_id, 1_300).unwrap();
+
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(
+        completed
+            .events
+            .iter()
+            .filter(|event| event.event_type.as_str() == "run_resume_attempted")
+            .count(),
+        1
+    );
+    assert_eq!(restarted.station_snapshot(1_301).unwrap().movement_count, 1);
 }
 
 #[test]

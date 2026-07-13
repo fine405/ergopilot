@@ -723,6 +723,7 @@ describe("control-plane API", () => {
     ["task_conflict", 409],
     ["invalid_transition", 409],
     ["approval_expired", 409],
+    ["recovery_budget_exhausted", 409],
     ["device_unavailable", 503],
     ["station_rpc_error", 502],
     ["output_limit", 502],

@@ -285,7 +285,14 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
-  it("accepts a dedicated resume event", () => {
+  it("accepts dedicated resume attempt and completion events", () => {
+    expect(
+      taskEventSchema.parse({
+        sequence: 5,
+        eventType: "run_resume_attempted",
+        atMs: 1_150,
+      }).eventType,
+    ).toBe("run_resume_attempted");
     expect(
       taskEventSchema.parse({
         sequence: 6,

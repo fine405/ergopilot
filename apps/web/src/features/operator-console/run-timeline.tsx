@@ -45,6 +45,11 @@ const taskEventPresentation = {
   run_failed: ["Run failed", XCircle, "text-destructive"],
   policy_denied: ["Policy denied", XCircle, "text-destructive"],
   run_reconciled: ["Run reconciled", CheckCircle2, "text-status-ok"],
+  run_resume_attempted: [
+    "Resume attempt recorded",
+    RefreshCw,
+    "text-status-info",
+  ],
   run_resumed: ["Run resumed", CheckCircle2, "text-status-ok"],
   run_suspended: ["Run suspended", TriangleAlert, "text-status-warn"],
 } satisfies Record<TaskEventType, Presentation>;

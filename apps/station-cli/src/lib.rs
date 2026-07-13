@@ -76,6 +76,9 @@ impl DemoError {
             Self::Task(TaskRuntimeError::UnauthorizedApprover { .. }) => "forbidden",
             Self::Task(TaskRuntimeError::TaskIdConflict { .. }) => "task_conflict",
             Self::Task(TaskRuntimeError::ApprovalExpired { .. }) => "approval_expired",
+            Self::Task(TaskRuntimeError::RecoveryBudgetExhausted { .. }) => {
+                "recovery_budget_exhausted"
+            }
             Self::Task(
                 TaskRuntimeError::RunNotApprovable { .. }
                 | TaskRuntimeError::PendingCommandNotFound { .. }

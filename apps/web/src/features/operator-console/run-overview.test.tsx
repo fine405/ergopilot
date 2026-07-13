@@ -66,6 +66,14 @@ const suspendedRun: TaskRunView = {
   ],
 };
 
+const resumeAttemptedRun: TaskRunView = {
+  ...suspendedRun,
+  events: [
+    ...suspendedRun.events,
+    { sequence: 5, eventType: "run_resume_attempted", atMs: 2_100 },
+  ],
+};
+
 const staleRun: TaskRunView = {
   ...suspendedRun,
   suspensionReason: "stale_state",
@@ -182,7 +190,7 @@ describe("RunOverview", () => {
 
     render(
       <RunOverview
-        run={suspendedRun}
+        run={resumeAttemptedRun}
         isLoading={false}
         error={null}
         isMutating={false}
@@ -197,9 +205,10 @@ describe("RunOverview", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Resume run" }));
 
-    expect(onResume).toHaveBeenCalledWith(suspendedRun);
+    expect(onResume).toHaveBeenCalledWith(resumeAttemptedRun);
     expect(onReconcile).not.toHaveBeenCalled();
     expect(screen.getByText("Run suspended safely")).toBeTruthy();
+    expect(screen.getByText("Resume attempt recorded")).toBeTruthy();
   });
 
   it("reconciles an uncertain outcome without calling resume", () => {

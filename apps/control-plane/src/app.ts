@@ -63,6 +63,7 @@ function stationRpcStatus(
     case "task_conflict":
     case "invalid_transition":
     case "approval_expired":
+    case "recovery_budget_exhausted":
       return 409;
     case "device_unavailable":
       return 503;

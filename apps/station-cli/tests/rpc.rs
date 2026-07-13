@@ -73,6 +73,14 @@ fn rpc_error_codes_cover_transition_availability_and_fallback_categories() {
         "invalid_transition"
     );
     assert_eq!(
+        DemoError::Task(TaskRuntimeError::RecoveryBudgetExhausted {
+            run_id: "run-suspended".into(),
+            max_attempts: 3,
+        })
+        .rpc_code(),
+        "recovery_budget_exhausted"
+    );
+    assert_eq!(
         DemoError::Task(TaskRuntimeError::Station(RuntimeError::Device(
             DeviceError::unavailable("device is offline"),
         )))

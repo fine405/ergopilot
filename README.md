@@ -34,9 +34,10 @@ runnable end to end. The current slice implements:
 - a demo-only device-offline path that fails before effect and requires a
   fresh run instead of a blind retry;
 - a structured pre-dispatch device-unavailable path that suspends safely and
-  resumes the same run through a dedicated operator action with durable
-  `run_resumed` evidence, while uncertain outcomes keep a separate
-  reconciliation path;
+  resumes the same run through a dedicated operator action; each attempt is
+  atomically persisted before device access, capped at three, and completed
+  with durable `run_resumed` evidence, while uncertain outcomes keep a
+  separate reconciliation path;
 - persisted suspension reasons that distinguish recoverable device
   unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
