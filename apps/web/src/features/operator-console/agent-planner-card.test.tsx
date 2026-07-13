@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { PlannerProvider, TaskPlanResponse } from "@ergopilot/contracts";
+import type {
+  PlannerProvider,
+  TaskPlanResponse,
+  TaskRunView,
+} from "@ergopilot/contracts";
 import {
   cleanup,
   fireEvent,
@@ -8,7 +12,16 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { AgentPlannerCard } from "./agent-planner-card";
 
@@ -55,23 +68,94 @@ const plan: TaskPlanResponse = {
   },
 };
 
-afterEach(cleanup);
+const awaitingRun: TaskRunView = {
+  runId: "run-agent-chat-1",
+  taskId: plan.task.taskId,
+  task: plan.task,
+  status: "awaiting_approval",
+  suspensionReason: null,
+  approval: {
+    approvalId: "approval-agent-chat-1",
+    expiresAtMs: 61_000,
+    status: "pending",
+    approvedBy: null,
+    approvedAtMs: null,
+  },
+  command: null,
+  commandEvents: [],
+  events: [
+    { sequence: 1, eventType: "run_started", atMs: 1_000 },
+    { sequence: 2, eventType: "approval_required", atMs: 1_000 },
+  ],
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: ["desk.motion.requires_approval"],
+    reasonCode: null,
+  },
+};
+
+const completedRun: TaskRunView = {
+  ...awaitingRun,
+  status: "completed",
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    status: "approved",
+    approvedBy: "demo-user",
+    approvedAtMs: 2_000,
+  },
+};
+
+const defaultProps = {
+  providers,
+  run: undefined,
+  onGenerate: vi.fn(async () => plan),
+  onStart: vi.fn(async () => awaitingRun),
+  onApprove: vi.fn(async () => completedRun),
+  onCancel: vi.fn(async () => awaitingRun),
+  isPlanning: false,
+  isStarting: false,
+  isActing: false,
+  planningError: null,
+  actionError: null,
+} satisfies ComponentProps<typeof AgentPlannerCard>;
+
+function renderPlanner(
+  overrides: Partial<ComponentProps<typeof AgentPlannerCard>> = {},
+) {
+  return render(<AgentPlannerCard {...defaultProps} {...overrides} />);
+}
+
+beforeAll(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
+
+afterAll(() => vi.unstubAllGlobals());
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe("AgentPlannerCard", () => {
+  it("presents planning as a conversation", () => {
+    renderPlanner();
+
+    expect(screen.getByRole("log")).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText("Describe your workstation goal…"),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
+  });
+
   it("shows missing-key providers as disabled and selects an enabled provider", () => {
-    render(
-      <AgentPlannerCard
-        providers={providers}
-        plan={undefined}
-        plannedRequest={undefined}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={vi.fn(async () => undefined)}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
+    renderPlanner();
 
     const providerSelect = screen.getByLabelText(
       "Provider",
@@ -84,82 +168,27 @@ describe("AgentPlannerCard", () => {
     expect(openaiOption.disabled).toBe(true);
   });
 
-  it("disables planning when no provider key is configured", () => {
-    render(
-      <AgentPlannerCard
-        providers={providers.map((provider) => ({
-          ...provider,
-          enabled: false,
-        }))}
-        plan={undefined}
-        plannedRequest={undefined}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={vi.fn(async () => undefined)}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
+  it("disables chat submission when no provider key is configured", () => {
+    renderPlanner({
+      providers: providers.map((provider) => ({
+        ...provider,
+        enabled: false,
+      })),
+    });
 
-    const generateButton = screen.getByRole("button", {
-      name: "Generate safe plan",
-    }) as HTMLButtonElement;
-    const deepseekOption = screen.getByRole("option", {
-      name: "DeepSeek · deepseek/deepseek-v4-flash · key missing",
-    }) as HTMLOptionElement;
-
-    expect(generateButton.disabled).toBe(true);
-    expect(deepseekOption.disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     expect(screen.getByDisplayValue("No provider configured")).toBeTruthy();
   });
 
-  it("distinguishes provider discovery failure from missing keys", () => {
-    render(
-      <AgentPlannerCard
-        providers={undefined}
-        providerError="Control plane is unavailable"
-        plan={undefined}
-        plannedRequest={undefined}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={vi.fn(async () => undefined)}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
+  it("turns natural language into a plan without starting a run", async () => {
+    const onGenerate = vi.fn(async () => plan);
+    const onStart = vi.fn(async () => awaitingRun);
+    renderPlanner({ onGenerate, onStart });
 
-    const generateButton = screen.getByRole("button", {
-      name: "Generate safe plan",
-    }) as HTMLButtonElement;
-
-    expect(generateButton.disabled).toBe(true);
-    expect(
-      screen.getByDisplayValue("Provider status unavailable"),
-    ).toBeTruthy();
-    expect(screen.getByText("Control plane is unavailable")).toBeTruthy();
-    expect(screen.queryByText("No provider configured")).toBeNull();
-  });
-
-  it("submits natural language for planning without starting a task", async () => {
-    const onGenerate = vi.fn(async () => undefined);
-    const onStart = vi.fn(async () => undefined);
-    render(
-      <AgentPlannerCard
-        providers={providers}
-        plan={undefined}
-        plannedRequest={undefined}
-        onGenerate={onGenerate}
-        onStart={onStart}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Generate safe plan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     await waitFor(() => expect(onGenerate).toHaveBeenCalledOnce());
     expect(onGenerate).toHaveBeenCalledWith({
@@ -168,92 +197,85 @@ describe("AgentPlannerCard", () => {
         "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.",
       requestedBy: "demo-user",
     });
-    expect(onStart).not.toHaveBeenCalled();
-  });
-
-  it("requires a second explicit action before starting the generated plan", () => {
-    const onStart = vi.fn(async () => undefined);
-    render(
-      <AgentPlannerCard
-        providers={providers}
-        plan={plan}
-        plannedRequest={{
-          provider: "deepseek",
-          prompt:
-            "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.",
-          requestedBy: "demo-user",
-        }}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={onStart}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
-
+    expect(
+      await screen.findByRole("button", { name: "Create protected run" }),
+    ).toBeTruthy();
     expect(screen.getByText("desk.move_to_height · 790mm")).toBeTruthy();
-    expect(screen.getByText("Interruptions: critical-only")).toBeTruthy();
     expect(onStart).not.toHaveBeenCalled();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Confirm and create run" }),
-    );
-
-    expect(onStart).toHaveBeenCalledWith(plan.task);
   });
 
-  it("hides confirmation when the request changes after generation", () => {
-    render(
-      <AgentPlannerCard
-        providers={providers}
-        plan={plan}
-        plannedRequest={{
-          provider: "deepseek",
-          prompt:
-            "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.",
-          requestedBy: "demo-user",
-        }}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={vi.fn(async () => undefined)}
-        isPlanning={false}
-        isStarting={false}
-        planningError={null}
-        startError={null}
-      />,
-    );
-
-    fireEvent.change(screen.getByLabelText("Workstation goal"), {
-      target: { value: "Use a different height" },
+  it("keeps planning failures attached to their original chat turns", async () => {
+    const failures = [
+      new Error("First planning request failed"),
+      new Error("Second planning request failed"),
+    ];
+    const onGenerate = vi.fn(async () => {
+      throw failures.shift() ?? new Error("Unexpected planning request");
     });
+    renderPlanner({ onGenerate });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(
+      await screen.findByText("First planning request failed"),
+    ).toBeTruthy();
+
+    fireEvent.change(
+      screen.getByPlaceholderText("Describe your workstation goal…"),
+      { target: { value: "Try a second workstation plan" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(
-      screen.queryByRole("button", { name: "Confirm and create run" }),
-    ).toBeNull();
+      await screen.findByText("Second planning request failed"),
+    ).toBeTruthy();
+    expect(screen.getByText("First planning request failed")).toBeTruthy();
   });
 
-  it("hides the previous plan while a new request is pending", () => {
-    render(
+  it("keeps device motion behind a second runtime approval", async () => {
+    const onStart = vi.fn(async () => awaitingRun);
+    const onApprove = vi.fn(async () => completedRun);
+    const view = renderPlanner({ onStart, onApprove });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Create protected run" }),
+    );
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(plan.task));
+
+    view.rerender(
       <AgentPlannerCard
-        providers={providers}
-        plan={plan}
-        plannedRequest={{
-          provider: "deepseek",
-          prompt:
-            "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.",
-          requestedBy: "demo-user",
-        }}
-        onGenerate={vi.fn(async () => undefined)}
-        onStart={vi.fn(async () => undefined)}
-        isPlanning
-        isStarting={false}
-        planningError={null}
-        startError={null}
+        {...defaultProps}
+        run={awaitingRun}
+        onStart={onStart}
+        onApprove={onApprove}
       />,
     );
 
+    const approveButton = await screen.findByRole("button", {
+      name: "Approve motion",
+    });
+    expect(onApprove).not.toHaveBeenCalled();
+
+    fireEvent.click(approveButton);
+
+    expect(onApprove).toHaveBeenCalledWith(awaitingRun);
+  });
+
+  it("reports verified completion in the conversation", async () => {
+    const view = renderPlanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Create protected run" }),
+    );
+    view.rerender(<AgentPlannerCard {...defaultProps} run={completedRun} />);
+
     expect(
-      screen.queryByRole("button", { name: "Confirm and create run" }),
-    ).toBeNull();
+      await screen.findByText(
+        (_, node) =>
+          node?.tagName === "SPAN" &&
+          node.textContent === "Approved and verified at 790 mm.",
+      ),
+    ).toBeTruthy();
   });
 });

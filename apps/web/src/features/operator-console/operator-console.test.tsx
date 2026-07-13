@@ -9,6 +9,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OperatorConsole } from "./operator-console";
@@ -33,30 +34,29 @@ vi.mock("@tanstack/react-router", () => ({ useHydrated: () => true }));
 vi.mock("@/lib/control-plane", () => ({ controlPlane: controlPlaneMock }));
 vi.mock("./agent-planner-card", () => ({
   AgentPlannerCard: ({
-    plan,
-    isPlanning,
     onGenerate,
   }: {
-    plan: TaskPlanResponse | undefined;
-    isPlanning: boolean;
-    onGenerate: (request: TaskPlanRequest) => Promise<void>;
-  }) => (
-    <div>
-      <button
-        type="button"
-        onClick={() =>
-          void onGenerate({
-            provider: "deepseek",
-            prompt: "Plan without waiting for trace refresh",
-            requestedBy: "test-user",
-          })
-        }
-      >
-        Plan now
-      </button>
-      <span>{isPlanning ? "planning" : (plan?.task.taskId ?? "no plan")}</span>
-    </div>
-  ),
+    onGenerate: (request: TaskPlanRequest) => Promise<TaskPlanResponse>;
+  }) => {
+    const [taskId, setTaskId] = useState("no plan");
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() =>
+            void onGenerate({
+              provider: "deepseek",
+              prompt: "Plan without waiting for trace refresh",
+              requestedBy: "test-user",
+            }).then((result) => setTaskId(result.task.taskId))
+          }
+        >
+          Plan now
+        </button>
+        <span>{taskId}</span>
+      </div>
+    );
+  },
 }));
 vi.mock("./planner-attempts-card", () => ({
   PlannerAttemptsCard: () => null,

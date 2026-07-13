@@ -238,20 +238,20 @@ export function OperatorConsole({
           <AgentPlannerCard
             providers={plannerProvidersQuery.data?.providers}
             providerError={errorMessage(plannerProvidersQuery.error)}
-            plan={planMutation.data}
-            plannedRequest={planMutation.variables}
+            run={runQuery.data}
             onGenerate={(request) => {
               planMutation.reset();
               startMutation.reset();
-              return planMutation.mutateAsync(request).then(() => undefined);
+              return planMutation.mutateAsync(request);
             }}
-            onStart={(task) =>
-              startMutation.mutateAsync(task).then(() => undefined)
-            }
+            onStart={(task) => startMutation.mutateAsync(task)}
+            onApprove={(run) => approveMutation.mutateAsync(run)}
+            onCancel={(run) => cancelMutation.mutateAsync(run)}
             isPlanning={planMutation.isPending}
             isStarting={startMutation.isPending}
+            isActing={approveMutation.isPending || cancelMutation.isPending}
             planningError={errorMessage(planMutation.error)}
-            startError={errorMessage(startMutation.error)}
+            actionError={actionError}
           />
           <TaskComposer
             onSubmit={(task) =>
