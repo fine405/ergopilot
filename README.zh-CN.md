@@ -22,7 +22,7 @@ ErgoPilot 是一个面向模拟人体工学工作站的可恢复具身 Agent 运
 
 ![ErgoPilot 从场景预设到验证完成的演示](docs/assets/ergopilot-demo.gif)
 
-[打开 6 秒 MP4 演示视频](docs/assets/ergopilot-demo.mp4) ·
+[打开 6.5 秒 MP4 演示视频](docs/assets/ergopilot-demo.mp4) ·
 [查看审批界面截图](docs/assets/ergopilot-approval.jpg)
 
 ## 当前纵向切片

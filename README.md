@@ -28,7 +28,7 @@ preview, the scoped four-motion approval and the completed profile.
 
 ![ErgoPilot preset-to-verified-action demo](docs/assets/ergopilot-demo.gif)
 
-[Open the 6-second MP4 walkthrough](docs/assets/ergopilot-demo.mp4) ·
+[Open the 6.5-second MP4 walkthrough](docs/assets/ergopilot-demo.mp4) ·
 [View the approval screen](docs/assets/ergopilot-approval.jpg)
 
 ## Current vertical slice

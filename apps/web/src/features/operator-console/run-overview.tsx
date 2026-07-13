@@ -316,16 +316,18 @@ export function RunOverview({
                           Demo-only paths; normal approval remains unchanged.
                         </p>
                       </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="grid gap-2">
                         <AlertDialogAction
                           variant="destructive"
                           onClick={() => onApproveWithAckLoss(run)}
+                          className="h-auto min-h-8 whitespace-normal! py-2"
                         >
                           Approve + lose ACK (demo)
                         </AlertDialogAction>
                         <AlertDialogAction
                           variant="destructive"
                           onClick={() => onApproveWithDeviceOffline(run)}
+                          className="h-auto min-h-8 whitespace-normal! py-2"
                         >
                           Approve + device offline (demo)
                         </AlertDialogAction>
@@ -334,7 +336,7 @@ export function RunOverview({
                           onClick={() =>
                             onApproveWithDeviceUnavailableBeforeDispatch(run)
                           }
-                          className="sm:col-span-2"
+                          className="h-auto min-h-8 whitespace-normal! py-2"
                         >
                           Approve + unavailable before dispatch (demo)
                         </AlertDialogAction>
