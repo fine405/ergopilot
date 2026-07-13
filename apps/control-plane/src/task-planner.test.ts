@@ -106,6 +106,48 @@ describe("StructuredTaskPlanner", () => {
     });
   });
 
+  it("maps one workstation profile draft to ordered desk and lumbar steps", async () => {
+    const planner = new StructuredTaskPlanner({
+      generateDraft: async () => ({
+        action: "workstation.restore_profile",
+        targetHeightMm: 780,
+        lumbarSupportPercent: 65,
+        durationMinutes: 45,
+        interruptionPolicy: "critical-only",
+        assumptions: ["Desk movement area is clear"],
+      }),
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      createTaskId: () => "task-agent-profile-1",
+    });
+
+    const result = await planner.plan({
+      provider: "deepseek",
+      prompt: "Set my desk to 780 mm and lumbar support to 65 percent",
+      requestedBy: "user-1",
+    });
+
+    expect(result.task).toMatchObject({
+      goal: "restore_profile",
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 780 },
+          },
+        },
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    });
+  });
+
   it("rejects a model draft outside the physical safety envelope", async () => {
     const planner = new StructuredTaskPlanner({
       generateDraft: async () => ({

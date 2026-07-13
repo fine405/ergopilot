@@ -216,6 +216,55 @@ describe("ProcessStationClient", () => {
     expect(after.movementCount).toBe(1);
   });
 
+  it("executes one approved workstation profile across the process boundary", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-profile-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-profile-1",
+      goal: "restore_profile",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: ["Desk movement area is clear"],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 780 },
+          },
+        },
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    };
+
+    const awaiting = await client.startTask(task, 1_000);
+    const completed = await client.approveTask(awaiting.runId, "user-1", 1_100);
+    const after = await client.stationSnapshot(1_200);
+
+    expect(awaiting.status).toBe("awaiting_approval");
+    expect(completed.status).toBe("completed");
+    expect(completed.completedSteps?.map((step) => step.stepId)).toEqual([
+      "desk-1",
+      "chair-1",
+    ]);
+    expect(after.deskHeightMm).toBe(780);
+    expect(after.lumbarSupportPercent).toBe(65);
+    expect(after.movementCount).toBe(2);
+  });
+
   it("recovers a killed partial motion and permits the next command", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "ergopilot-partial-motion-"),

@@ -93,6 +93,7 @@ fn task_run_view_is_ready_for_a_typescript_timeline_consumer() {
         completed_json["commandEvents"][2]["eventType"],
         "verified_succeeded"
     );
+    assert_eq!(completed_json["completedSteps"][0]["stepId"], "desk-1");
 }
 
 #[test]
@@ -118,7 +119,9 @@ fn task_runtime_reads_and_upgrades_the_previous_stored_run_shape() {
     let view = legacy["view"].as_object_mut().unwrap();
     let legacy_spec = view.remove("task").unwrap();
     view.remove("commandEvents");
+    view.remove("completedSteps");
     view.remove("suspensionReason");
+    legacy.as_object_mut().unwrap().remove("currentStepIndex");
     legacy
         .as_object_mut()
         .unwrap()

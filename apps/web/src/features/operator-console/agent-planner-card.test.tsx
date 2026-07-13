@@ -92,6 +92,31 @@ const chairPlan: TaskPlanResponse = {
   planner: plan.planner,
 };
 
+const profilePlan: TaskPlanResponse = {
+  task: {
+    ...plan.task,
+    taskId: "task-agent-profile-ui-1",
+    goal: "restore_profile",
+    steps: [
+      {
+        stepId: "desk-1",
+        action: {
+          type: "desk.move_to_height",
+          input: { heightMm: 780 },
+        },
+      },
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  planner: plan.planner,
+};
+
 const awaitingRun: TaskRunView = {
   runId: "run-agent-chat-1",
   taskId: plan.task.taskId,
@@ -142,6 +167,25 @@ const awaitingChairRun: TaskRunView = {
   policyDecision: {
     outcome: "require_approval",
     ruleIds: ["chair.lumbar.requires_approval"],
+    reasonCode: null,
+  },
+};
+
+const awaitingProfileRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-agent-profile-chat-1",
+  taskId: profilePlan.task.taskId,
+  task: profilePlan.task,
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    approvalId: "approval-agent-profile-chat-1",
+  },
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: [
+      "desk.motion.requires_approval",
+      "chair.lumbar.requires_approval",
+    ],
     reasonCode: null,
   },
 };
@@ -249,7 +293,7 @@ describe("AgentPlannerCard", () => {
     expect(onGenerate).toHaveBeenCalledWith({
       provider: "deepseek",
       prompt:
-        "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.",
+        "Set the desk to 790 mm and lumbar support to 65% for a 45 minute focus session. Only interrupt me for critical issues.",
       requestedBy: "demo-user",
     });
     expect(
@@ -285,7 +329,45 @@ describe("AgentPlannerCard", () => {
     expect(
       await screen.findByText("Device action · chair.set_lumbar_support"),
     ).toBeTruthy();
-    expect(screen.getByText(/lumbar support to/).textContent).toContain("65%");
+    expect(
+      screen.getByText((content) =>
+        content.startsWith(
+          "The runtime is ready to adjust the simulated chair lumbar support",
+        ),
+      ).textContent,
+    ).toContain("65%");
+  });
+
+  it("shows two ordered device actions behind one profile approval", async () => {
+    const onGenerate = vi.fn(async () => profilePlan);
+    const onStart = vi.fn(async () => awaitingProfileRun);
+    const view = renderPlanner({ onGenerate, onStart });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(
+      await screen.findByText("desk.move_to_height · 780 mm"),
+    ).toBeTruthy();
+    expect(screen.getByText("chair.set_lumbar_support · 65%")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create protected run" }),
+    );
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(profilePlan.task));
+
+    view.rerender(
+      <AgentPlannerCard
+        {...defaultProps}
+        run={awaitingProfileRun}
+        onGenerate={onGenerate}
+        onStart={onStart}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Device workflow · workstation.restore_profile"),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Approve 2 motions" }),
+    ).toBeTruthy();
   });
 
   it("keeps planning failures attached to their original chat turns", async () => {

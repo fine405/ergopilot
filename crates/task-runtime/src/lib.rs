@@ -97,6 +97,36 @@ impl TaskSpec {
             }],
         }
     }
+
+    pub fn restore_profile(
+        task_id: impl Into<String>,
+        requested_by: impl Into<String>,
+        desk_height_mm: u16,
+        lumbar_support_percent: u8,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            task_id: task_id.into(),
+            goal: TaskGoal::RestoreProfile,
+            requested_by: requested_by.into(),
+            constraints: TaskConstraints::default(),
+            assumptions: Vec::new(),
+            steps: vec![
+                PlannedStep {
+                    step_id: "desk-1".into(),
+                    action: DeviceAction::DeskMoveToHeight {
+                        height_mm: desk_height_mm,
+                    },
+                },
+                PlannedStep {
+                    step_id: "chair-1".into(),
+                    action: DeviceAction::ChairSetLumbarSupport {
+                        level_percent: lumbar_support_percent,
+                    },
+                },
+            ],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +219,15 @@ pub struct TaskEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CompletedTaskStep {
+    pub step_id: String,
+    pub command: CommandView,
+    pub command_events: Vec<CommandEvent>,
+    pub desk_motion_progress: Vec<DeskMotionProgress>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TaskRunView {
     pub run_id: String,
     pub task_id: String,
@@ -202,6 +241,8 @@ pub struct TaskRunView {
     pub command_events: Vec<CommandEvent>,
     #[serde(default)]
     pub desk_motion_progress: Vec<DeskMotionProgress>,
+    #[serde(default)]
+    pub completed_steps: Vec<CompletedTaskStep>,
     pub events: Vec<TaskEvent>,
     pub policy_decision: PolicyDecision,
 }
@@ -258,6 +299,8 @@ pub struct TaskRuntime<D> {
 #[serde(rename_all = "camelCase")]
 struct StoredRun {
     expected_state_version: Option<u64>,
+    #[serde(default)]
+    current_step_index: usize,
     view: TaskRunView,
     command: Option<DeviceCommand>,
     grant: Option<PolicyGrant>,
@@ -313,8 +356,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 task_id: spec.task_id,
             });
         }
-        let action = spec.steps[0].action.clone();
-        let policy_decision = self.policy_authority.evaluate(&action);
+        let policy_decision = evaluate_task_policy(&self.policy_authority, &spec);
         let (status, approval, second_event, expected_state_version) = match policy_decision.outcome
         {
             PolicyOutcome::RequireApproval => (
@@ -347,6 +389,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             command: None,
             command_events: Vec::new(),
             desk_motion_progress: Vec::new(),
+            completed_steps: Vec::new(),
             events: vec![
                 TaskEvent {
                     sequence: 1,
@@ -364,6 +407,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         self.save_run(
             &StoredRun {
                 expected_state_version,
+                current_step_index: 0,
                 view: view.clone(),
                 command: None,
                 grant: None,
@@ -385,7 +429,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         approved_by: &str,
         now_ms: u64,
     ) -> Result<TaskRunView, TaskRuntimeError> {
-        let mut stored = self.prepare_approval(run_id, approved_by, now_ms)?;
+        let stored = self.prepare_approval(run_id, approved_by, now_ms)?;
         if matches!(
             stored.view.status,
             TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Suspended
@@ -393,67 +437,78 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             return Ok(stored.view);
         }
 
-        let (command, grant) = match (&stored.command, &stored.grant) {
-            (Some(command), Some(grant)) => (command.clone(), grant.clone()),
-            _ => {
-                return Err(TaskRuntimeError::CorruptRun {
-                    run_id: run_id.into(),
-                })
-            }
-        };
-        let mut device_error = None;
-        let command_view = match self.station.execute(command.clone(), &grant, now_ms) {
-            Ok(command_view) => command_view,
-            Err(RuntimeError::StaleState { .. }) => {
-                stored.view.status = TaskRunStatus::Suspended;
-                stored.view.suspension_reason = Some(SuspensionReason::StaleState);
-                append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
-                self.save_run(&stored, now_ms)?;
-                return Ok(stored.view);
-            }
-            Err(error @ RuntimeError::Device(_)) => {
-                let unavailable = matches!(
-                    &error,
-                    RuntimeError::Device(device_error)
-                        if device_error.kind() == DeviceErrorKind::Unavailable
-                );
-                if let Some(command_view) = self.station.inspect_command(&command)? {
-                    device_error = Some(error);
-                    command_view
-                } else if unavailable {
+        self.execute_approved_steps(stored, now_ms, TaskEventType::RunCompleted)
+    }
+
+    fn execute_approved_steps(
+        &mut self,
+        mut stored: StoredRun,
+        now_ms: u64,
+        completed_event: TaskEventType,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
+        loop {
+            let run_id = stored.view.run_id.clone();
+            let (command, grant) = match (&stored.command, &stored.grant) {
+                (Some(command), Some(grant)) => (command.clone(), grant.clone()),
+                _ => return Err(TaskRuntimeError::CorruptRun { run_id }),
+            };
+            let mut device_error = None;
+            let command_view = match self.station.execute(command.clone(), &grant, now_ms) {
+                Ok(command_view) => command_view,
+                Err(RuntimeError::StaleState { .. }) => {
                     stored.view.status = TaskRunStatus::Suspended;
-                    stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
+                    stored.view.suspension_reason = Some(SuspensionReason::StaleState);
                     append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                     self.save_run(&stored, now_ms)?;
                     return Ok(stored.view);
-                } else {
-                    stored.view.status = TaskRunStatus::Failed;
-                    append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
+                }
+                Err(error @ RuntimeError::Device(_)) => {
+                    let unavailable = matches!(
+                        &error,
+                        RuntimeError::Device(device_error)
+                            if device_error.kind() == DeviceErrorKind::Unavailable
+                    );
+                    if let Some(command_view) = self.station.inspect_command(&command)? {
+                        device_error = Some(error);
+                        command_view
+                    } else if unavailable {
+                        stored.view.status = TaskRunStatus::Suspended;
+                        stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
+                        append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                        self.save_run(&stored, now_ms)?;
+                        return Ok(stored.view);
+                    } else {
+                        stored.view.status = TaskRunStatus::Failed;
+                        append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
+                        self.save_run(&stored, now_ms)?;
+                        return Err(error.into());
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let (status, event_type) = task_outcome(command_view.status, completed_event);
+            stored.view.status = status;
+            stored.view.suspension_reason = None;
+            stored.view.command = Some(command_view);
+            self.refresh_command_events(&mut stored)?;
+
+            if status == TaskRunStatus::Completed {
+                record_completed_step(&mut stored)?;
+                if prepare_next_step(&self.policy_authority, &mut stored, now_ms)? {
                     self.save_run(&stored, now_ms)?;
+                    continue;
+                }
+            }
+
+            append_event(&mut stored.view, event_type, now_ms);
+            self.save_run(&stored, now_ms)?;
+            if status == TaskRunStatus::Failed {
+                if let Some(error) = device_error {
                     return Err(error.into());
                 }
             }
-            Err(error) => return Err(error.into()),
-        };
-        let (status, event_type) = match command_view.status {
-            CommandStatus::Succeeded => (TaskRunStatus::Completed, TaskEventType::RunCompleted),
-            CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
-                (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
-            }
-            CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
-        };
-        stored.view.status = status;
-        stored.view.suspension_reason = None;
-        stored.view.command = Some(command_view);
-        self.refresh_command_events(&mut stored)?;
-        append_event(&mut stored.view, event_type, now_ms);
-        self.save_run(&stored, now_ms)?;
-        if status == TaskRunStatus::Failed {
-            if let Some(error) = device_error {
-                return Err(error.into());
-            }
+            return Ok(stored.view);
         }
-        Ok(stored.view)
     }
 
     pub fn cancel(
@@ -584,16 +639,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             true
         } else if stored.command.is_none() && stored.grant.is_none() {
             let command = command_for(&stored, run_id, expires_at_ms)?;
-            let grant = self.policy_authority.issue(GrantRequest {
-                grant_id: command.policy_grant_id.clone(),
-                task_run_id: command.task_run_id.clone(),
-                command_id: command.command_id.clone(),
-                action: command.action.clone(),
-                expected_state_version: command.expected_state_version,
-                issued_at_ms: now_ms,
-                expires_at_ms: command.expires_at_ms,
-                rule_ids: stored.view.policy_decision.rule_ids.clone(),
-            })?;
+            let grant = issue_grant(&self.policy_authority, &command, now_ms)?;
             if let Some(approval) = &mut stored.view.approval {
                 approval.status = ApprovalStatus::Approved;
                 approval.approved_by = Some(approved_by.into());
@@ -669,7 +715,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 let command_events = self.station.events(&command.command_id)?;
                 let desk_motion_progress =
                     self.station.desk_motion_progress(&command.command_id)?;
-                let (view, _) = self.commit_continuation_update(
+                let (view, update_applied) = self.commit_continuation_update(
                     run_id,
                     current.view.status,
                     current.view.suspension_reason,
@@ -682,6 +728,10 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     },
                     now_ms,
                 )?;
+                if update_applied && view.status == TaskRunStatus::Executing {
+                    let stored = self.load_run(run_id)?;
+                    return self.execute_approved_steps(stored, now_ms, TaskEventType::RunResumed);
+                }
                 return Ok(view);
             }
         }
@@ -837,6 +887,10 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             },
             now_ms,
         )?;
+        if update_applied && view.status == TaskRunStatus::Executing {
+            let stored = self.load_run(&run_id)?;
+            return self.execute_approved_steps(stored, now_ms, completed_event);
+        }
         if update_applied && status == TaskRunStatus::Failed {
             if let Some(error) = device_error {
                 return Err(error.into());
@@ -853,6 +907,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         update: ContinuationUpdate,
         now_ms: u64,
     ) -> Result<(TaskRunView, bool), TaskRuntimeError> {
+        let policy_authority = self.policy_authority.clone();
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -885,7 +940,14 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 stored.view.command = Some(command);
                 stored.view.command_events = command_events;
                 stored.view.desk_motion_progress = desk_motion_progress;
-                append_event_once(&mut stored.view, event_type, now_ms);
+                if status == TaskRunStatus::Completed {
+                    record_completed_step(&mut stored)?;
+                    if !prepare_next_step(&policy_authority, &mut stored, now_ms)? {
+                        append_event_once(&mut stored.view, event_type, now_ms);
+                    }
+                } else {
+                    append_event_once(&mut stored.view, event_type, now_ms);
+                }
             }
         }
         let stored_json = serde_json::to_string(&stored)?;
@@ -981,9 +1043,9 @@ fn command_for(
         .view
         .task
         .steps
-        .first()
+        .get(stored.current_step_index)
         .ok_or(TaskRuntimeError::InvalidTaskSpec {
-            reason: "at least one planned step is required",
+            reason: "current planned step does not exist",
         })?;
     let action = step.action.clone();
     let expected_state_version =
@@ -1005,6 +1067,100 @@ fn command_for(
     })
 }
 
+fn issue_grant(
+    authority: &PolicyAuthority,
+    command: &DeviceCommand,
+    now_ms: u64,
+) -> Result<PolicyGrant, TaskRuntimeError> {
+    let decision = authority.evaluate(&command.action);
+    Ok(authority.issue(GrantRequest {
+        grant_id: command.policy_grant_id.clone(),
+        task_run_id: command.task_run_id.clone(),
+        command_id: command.command_id.clone(),
+        action: command.action.clone(),
+        expected_state_version: command.expected_state_version,
+        issued_at_ms: now_ms,
+        expires_at_ms: command.expires_at_ms,
+        rule_ids: decision.rule_ids,
+    })?)
+}
+
+fn record_completed_step(stored: &mut StoredRun) -> Result<(), TaskRuntimeError> {
+    let step = stored
+        .view
+        .task
+        .steps
+        .get(stored.current_step_index)
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+    if stored
+        .view
+        .completed_steps
+        .iter()
+        .any(|completed| completed.step_id == step.step_id)
+    {
+        return Ok(());
+    }
+    let command = stored
+        .view
+        .command
+        .clone()
+        .filter(|command| command.status == CommandStatus::Succeeded)
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+    stored.view.completed_steps.push(CompletedTaskStep {
+        step_id: step.step_id.clone(),
+        command,
+        command_events: stored.view.command_events.clone(),
+        desk_motion_progress: stored.view.desk_motion_progress.clone(),
+    });
+    Ok(())
+}
+
+fn prepare_next_step(
+    authority: &PolicyAuthority,
+    stored: &mut StoredRun,
+    now_ms: u64,
+) -> Result<bool, TaskRuntimeError> {
+    let next_step_index = stored.current_step_index + 1;
+    if next_step_index >= stored.view.task.steps.len() {
+        return Ok(false);
+    }
+    let state_version = stored
+        .view
+        .command
+        .as_ref()
+        .and_then(|command| command.outcome.as_ref())
+        .map(|outcome| outcome.state_version)
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+    let expires_at_ms = stored
+        .view
+        .approval
+        .as_ref()
+        .map(|approval| approval.expires_at_ms)
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+
+    stored.current_step_index = next_step_index;
+    stored.expected_state_version = Some(state_version);
+    let command = command_for(stored, &stored.view.run_id, expires_at_ms)?;
+    let grant = issue_grant(authority, &command, now_ms)?;
+    stored.command = Some(command);
+    stored.grant = Some(grant);
+    stored.view.status = TaskRunStatus::Executing;
+    stored.view.suspension_reason = None;
+    stored.view.command = None;
+    stored.view.command_events.clear();
+    stored.view.desk_motion_progress.clear();
+    append_event(&mut stored.view, TaskEventType::CommandDispatched, now_ms);
+    Ok(true)
+}
+
 fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
     if spec.schema_version != SCHEMA_VERSION {
         return Err(TaskRuntimeError::UnsupportedTaskSchemaVersion {
@@ -1022,17 +1178,73 @@ fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
             reason: "requestedBy must not be empty",
         });
     }
-    if spec.steps.len() != 1 {
+    if spec.steps.is_empty() || spec.steps.len() > 2 {
         return Err(TaskRuntimeError::InvalidTaskSpec {
-            reason: "the current runtime requires exactly one planned step",
+            reason: "the current runtime accepts one or two planned steps",
         });
     }
-    if spec.steps[0].step_id.trim().is_empty() {
+    if spec.goal == TaskGoal::RestoreProfile && spec.steps.len() != 2 {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "restore_profile requires exactly two planned steps",
+        });
+    }
+    if spec.steps.iter().any(|step| step.step_id.trim().is_empty()) {
         return Err(TaskRuntimeError::InvalidTaskSpec {
             reason: "stepId must not be empty",
         });
     }
+    if spec.steps.len() == 2
+        && (spec.goal != TaskGoal::RestoreProfile
+            || !matches!(spec.steps[0].action, DeviceAction::DeskMoveToHeight { .. })
+            || !matches!(
+                spec.steps[1].action,
+                DeviceAction::ChairSetLumbarSupport { .. }
+            ))
+    {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "restore_profile requires desk then lumbar steps",
+        });
+    }
+    if spec.steps.len() == 2 && spec.steps[0].step_id == spec.steps[1].step_id {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "stepId values must be unique",
+        });
+    }
     Ok(())
+}
+
+fn evaluate_task_policy(authority: &PolicyAuthority, spec: &TaskSpec) -> PolicyDecision {
+    let decisions: Vec<_> = spec
+        .steps
+        .iter()
+        .map(|step| authority.evaluate(&step.action))
+        .collect();
+    if let Some(denied) = decisions
+        .iter()
+        .find(|decision| decision.outcome == PolicyOutcome::Deny)
+    {
+        return denied.clone();
+    }
+    let rule_ids = decisions
+        .iter()
+        .flat_map(|decision| decision.rule_ids.iter().cloned())
+        .collect();
+    if decisions
+        .iter()
+        .any(|decision| decision.outcome == PolicyOutcome::RequireApproval)
+    {
+        PolicyDecision {
+            outcome: PolicyOutcome::RequireApproval,
+            rule_ids,
+            reason_code: None,
+        }
+    } else {
+        PolicyDecision {
+            outcome: PolicyOutcome::Allow,
+            rule_ids,
+            reason_code: None,
+        }
+    }
 }
 
 fn task_outcome(

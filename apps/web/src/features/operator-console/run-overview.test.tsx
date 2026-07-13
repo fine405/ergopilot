@@ -148,6 +148,107 @@ const awaitingChairRun: TaskRunView = {
   },
 };
 
+const completedProfileRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-web-profile",
+  taskId: "task-web-profile",
+  task: {
+    ...awaitingRun.task,
+    taskId: "task-web-profile",
+    goal: "restore_profile",
+    steps: [
+      awaitingRun.task.steps[0],
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  status: "completed",
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    status: "approved",
+    approvedBy: "user-1",
+    approvedAtMs: 1_100,
+  },
+  commandEvents: [
+    {
+      sequence: 4,
+      commandId: "cmd-run-web-profile-chair-1",
+      eventType: "accepted",
+      atMs: 1_200,
+    },
+  ],
+  completedSteps: [
+    {
+      stepId: "desk-1",
+      command: {
+        commandId: "cmd-run-web-profile-desk-1",
+        idempotencyKey: "run-web-profile:desk-1",
+        status: "succeeded",
+        outcome: {
+          stateVersion: 2,
+          deskHeightMm: 790,
+          lumbarSupportPercent: 35,
+          verifiedAtMs: 1_150,
+        },
+        wasReplayed: false,
+      },
+      commandEvents: [
+        {
+          sequence: 1,
+          commandId: "cmd-run-web-profile-desk-1",
+          eventType: "accepted",
+          atMs: 1_100,
+        },
+      ],
+      deskMotionProgress: [],
+    },
+    {
+      stepId: "chair-1",
+      command: {
+        commandId: "cmd-run-web-profile-chair-1",
+        idempotencyKey: "run-web-profile:chair-1",
+        status: "succeeded",
+        outcome: {
+          stateVersion: 3,
+          deskHeightMm: 790,
+          lumbarSupportPercent: 65,
+          verifiedAtMs: 1_200,
+        },
+        wasReplayed: false,
+      },
+      commandEvents: [
+        {
+          sequence: 4,
+          commandId: "cmd-run-web-profile-chair-1",
+          eventType: "accepted",
+          atMs: 1_200,
+        },
+      ],
+      deskMotionProgress: [],
+    },
+  ],
+  events: [
+    ...awaitingRun.events,
+    { sequence: 3, eventType: "approval_granted", atMs: 1_100 },
+    { sequence: 4, eventType: "command_dispatched", atMs: 1_100 },
+    { sequence: 5, eventType: "command_dispatched", atMs: 1_150 },
+    { sequence: 6, eventType: "run_completed", atMs: 1_200 },
+  ],
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: [
+      "desk.motion.requires_approval",
+      "chair.lumbar.requires_approval",
+    ],
+    reasonCode: null,
+  },
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
@@ -194,6 +295,26 @@ describe("RunOverview", () => {
 
     expect(screen.getByText("60% · 762 mm")).toBeTruthy();
     expect(screen.getByText("Rust device progress")).toBeTruthy();
+  });
+
+  it("shows station evidence for every completed profile step", () => {
+    render(
+      <RunOverview
+        run={completedProfileRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText("Command accepted")).toHaveLength(2);
   });
 
   it("offers an explicit demo action for approving with ACK loss", () => {

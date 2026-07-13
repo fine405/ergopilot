@@ -164,8 +164,10 @@ function pendingPreviewHeight(run: TaskRunView | undefined) {
   ) {
     return undefined;
   }
-  const action = run.task.steps[0].action;
-  return action.type === "desk.move_to_height"
+  const action = run.task.steps.find(
+    (step) => step.action.type === "desk.move_to_height",
+  )?.action;
+  return action?.type === "desk.move_to_height"
     ? action.input.heightMm
     : undefined;
 }
@@ -177,8 +179,10 @@ function pendingPreviewLumbarSupport(run: TaskRunView | undefined) {
   ) {
     return undefined;
   }
-  const action = run.task.steps[0].action;
-  return action.type === "chair.set_lumbar_support"
+  const action = run.task.steps.find(
+    (step) => step.action.type === "chair.set_lumbar_support",
+  )?.action;
+  return action?.type === "chair.set_lumbar_support"
     ? action.input.levelPercent
     : undefined;
 }

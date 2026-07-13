@@ -3,7 +3,8 @@ use ergopilot_protocol::{CommandStatus, DeviceAction, PolicyOutcome, SCHEMA_VERS
 use policy_core::PolicyAuthority;
 use station_core::DeviceAdapter;
 use task_runtime::{
-    ApprovalStatus, SuspensionReason, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec,
+    ApprovalStatus, SuspensionReason, TaskGoal, TaskRunStatus, TaskRuntime, TaskRuntimeError,
+    TaskSpec,
 };
 
 #[test]
@@ -79,6 +80,38 @@ fn lumbar_motion_waits_for_approval_then_persists_verified_state() {
     assert_eq!(after.lumbar_support_percent, 65);
     assert_eq!(after.desk_height_mm, 720);
     assert_eq!(after.movement_count, 1);
+}
+
+#[test]
+fn one_approval_executes_a_desk_and_lumbar_profile_in_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let spec = TaskSpec::restore_profile("task-profile-1", "user-1", 780, 65);
+
+    let awaiting = runtime.start(spec, 1_000).unwrap();
+    let before = runtime.station_snapshot(1_001).unwrap();
+    let completed = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+    let after = runtime.station_snapshot(1_101).unwrap();
+
+    assert_eq!(awaiting.status, TaskRunStatus::AwaitingApproval);
+    assert_eq!(before.movement_count, 0);
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(completed.completed_steps.len(), 2);
+    assert_eq!(completed.completed_steps[0].step_id, "desk-1");
+    assert_eq!(completed.completed_steps[1].step_id, "chair-1");
+    assert_eq!(after.desk_height_mm, 780);
+    assert_eq!(after.lumbar_support_percent, 65);
+    assert_eq!(after.movement_count, 2);
+    assert_eq!(
+        completed
+            .events
+            .iter()
+            .filter(|event| event.event_type.as_str() == "command_dispatched")
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -367,6 +400,21 @@ fn task_without_a_planned_step_is_rejected_before_policy_evaluation() {
     let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
     let mut spec = TaskSpec::prepare_focus_session("task-empty-plan", "user-1", 760);
     spec.steps.clear();
+
+    let error = runtime.start(spec, 1_000).unwrap_err();
+
+    assert!(matches!(error, TaskRuntimeError::InvalidTaskSpec { .. }));
+    assert_eq!(runtime.station_snapshot(1_001).unwrap().movement_count, 0);
+}
+
+#[test]
+fn restore_profile_rejects_a_partial_device_plan() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let mut spec = TaskSpec::prepare_focus_session("task-partial-profile", "user-1", 760);
+    spec.goal = TaskGoal::RestoreProfile;
 
     let error = runtime.start(spec, 1_000).unwrap_err();
 

@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { presentDeviceAction } from "@/features/device-action";
+import { presentTask } from "@/features/device-action";
 import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 import { RunTimeline } from "./run-timeline";
@@ -100,13 +100,15 @@ export function RunOverview({
     );
   }
 
-  const presentation = presentDeviceAction(run.task.steps[0].action);
+  const presentation = presentTask(run.task);
+  const commandCount = run.task.steps.length;
   const approvalPending =
     run.status === "awaiting_approval" && run.approval?.status === "pending";
   const canReconcile = run.status === "outcome_unknown";
   const canResume =
     run.status === "suspended" && run.suspensionReason === "device_unavailable";
   const latestProgress = run.deskMotionProgress.at(-1);
+  const commandTimelineEvents = collectCommandEvents(run);
 
   return (
     <div className="space-y-6">
@@ -224,10 +226,12 @@ export function RunOverview({
                         {presentation.authorizationTitle}
                       </AlertDialogTitle>
                       <AlertDialogDescription>
-                        This grant is scoped to run {run.runId}, its exact
-                        command, {presentation.scopeTarget}, and the state
-                        version used by the plan. It cannot authorize a
-                        different movement.
+                        This grant is scoped to run {run.runId}, its{" "}
+                        {commandCount === 1
+                          ? "exact command"
+                          : `${commandCount} exact ordered commands`}
+                        , {presentation.scopeTarget}, and the state version used
+                        by the plan. It cannot authorize a different movement.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <div className="rounded-lg border bg-muted/40 p-3 font-mono text-xs">
@@ -271,7 +275,9 @@ export function RunOverview({
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
                       <AlertDialogAction onClick={() => onApprove(run)}>
-                        Approve one motion
+                        {commandCount === 1
+                          ? "Approve one motion"
+                          : `Approve ${commandCount} motions`}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
@@ -291,9 +297,24 @@ export function RunOverview({
         </CardContent>
       </Card>
 
-      <RunTimeline taskEvents={run.events} commandEvents={run.commandEvents} />
+      <RunTimeline
+        taskEvents={run.events}
+        commandEvents={commandTimelineEvents}
+      />
     </div>
   );
+}
+
+function collectCommandEvents(run: TaskRunView) {
+  const events = [
+    ...(run.completedSteps?.flatMap((step) => step.commandEvents) ?? []),
+    ...run.commandEvents,
+  ];
+  return Array.from(
+    new Map(
+      events.map((event) => [`${event.commandId}:${event.sequence}`, event]),
+    ).values(),
+  ).sort((left, right) => left.sequence - right.sequence);
 }
 
 function Metric({
@@ -337,7 +358,7 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
         <AlertTitle>Verified completion</AlertTitle>
         <AlertDescription>
           The runtime read the device state after execution and observed the{" "}
-          {presentDeviceAction(run.task.steps[0].action).verifiedState}.
+          {presentTask(run.task).verifiedState}.
         </AlertDescription>
       </Alert>
     );

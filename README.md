@@ -56,6 +56,8 @@ desktop station are runnable end to end. The current slice implements:
   pending proposal, but cannot approve or directly execute physical motion;
 - typed desk-height and smart-chair lumbar-support actions with independent
   safety envelopes, approval rules and verified simulator state;
+- an ordered `restore_profile` task that turns one approved Chat request into
+  a persisted desk-height command followed by a lumbar-support command;
 - a Three.js digital twin whose desk actuator and chair lumbar pad follow Rust
   telemetry, with Rapier providing visual gravity and collision simulation;
 - a Tauri 2 desktop host that embeds the same TanStack UI while keeping the
@@ -93,6 +95,13 @@ Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
 matching Mastra planner providers. The provider selector shows missing-key
 providers as disabled. Without either key, the deterministic task builder and
 complete execution path remain usable.
+
+For the shortest Chat-to-device demo, use a request such as: **Set the desk to
+790 mm and lumbar support to 65% for a 45 minute focus session. Only interrupt
+me for critical issues.** Review the generated two-step `TaskSpec`, create the
+protected run, then approve the two ordered motions once. The Three.js twin
+previews both targets before approval and follows the verified Rust simulator
+state after execution.
 
 ### Run the desktop station
 

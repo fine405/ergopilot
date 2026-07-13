@@ -108,6 +108,41 @@ const awaitingChairRun: TaskRunView = {
   },
 };
 
+const awaitingProfileRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-awaiting-profile-approval",
+  taskId: "task-awaiting-profile-approval",
+  task: {
+    ...awaitingRun.task,
+    taskId: "task-awaiting-profile-approval",
+    goal: "restore_profile",
+    steps: [
+      {
+        stepId: "desk-1",
+        action: {
+          type: "desk.move_to_height",
+          input: { heightMm: 780 },
+        },
+      },
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: [
+      "desk.motion.requires_approval",
+      "chair.lumbar.requires_approval",
+    ],
+    reasonCode: null,
+  },
+};
+
 afterEach(cleanup);
 
 describe("WorkstationTwinCard", () => {
@@ -162,6 +197,20 @@ describe("WorkstationTwinCard", () => {
 
     expect(screen.getByText("Verified lumbar support")).toBeTruthy();
     expect(screen.getByText("35%")).toBeTruthy();
+    expect(screen.getByText("Preview lumbar 65%")).toBeTruthy();
+  });
+
+  it("previews both targets from one pending workstation profile", () => {
+    render(
+      <WorkstationTwinCard
+        snapshot={snapshot}
+        run={awaitingProfileRun}
+        isLoading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByText("Preview 780 mm")).toBeTruthy();
     expect(screen.getByText("Preview lumbar 65%")).toBeTruthy();
   });
 });

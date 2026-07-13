@@ -190,9 +190,38 @@ export const taskSpecSchema = z
     requestedBy: actorIdSchema,
     constraints: taskConstraintsSchema,
     assumptions: z.array(assumptionSchema).max(16),
-    steps: z.array(plannedStepSchema).length(1),
+    steps: z.array(plannedStepSchema).min(1).max(2),
   })
-  .strict();
+  .strict()
+  .superRefine((task, context) => {
+    if (task.goal === "restore_profile" && task.steps.length !== 2) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: "restore_profile requires exactly two planned steps",
+      });
+    }
+    if (task.steps.length !== 2) return;
+    const [deskStep, chairStep] = task.steps;
+    if (
+      task.goal !== "restore_profile" ||
+      deskStep?.action.type !== "desk.move_to_height" ||
+      chairStep?.action.type !== "chair.set_lumbar_support"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: "restore_profile requires desk then lumbar steps",
+      });
+    }
+    if (deskStep?.stepId === chairStep?.stepId) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps", 1, "stepId"],
+        message: "stepId values must be unique",
+      });
+    }
+  });
 
 export const plannerProviderIdSchema = z.enum(["openai", "deepseek"]);
 
@@ -301,6 +330,14 @@ export const taskPlanDraftSchema = z.discriminatedUnion("action", [
       ...taskPlanDraftFields,
     })
     .strict(),
+  z
+    .object({
+      action: z.literal("workstation.restore_profile"),
+      targetHeightMm: safeDeskHeightMmSchema,
+      lumbarSupportPercent: safeLumbarSupportPercentSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
 ]);
 
 export const taskPlanResponseSchema = z
@@ -389,6 +426,15 @@ export const deskMotionProgressSchema = z
   })
   .strict();
 
+export const completedTaskStepSchema = z
+  .object({
+    stepId: identifierSchema,
+    command: commandViewSchema,
+    commandEvents: z.array(commandEventSchema),
+    deskMotionProgress: z.array(deskMotionProgressSchema).max(101),
+  })
+  .strict();
+
 export const taskEventSchema = z
   .object({
     sequence: z.number().int().positive(),
@@ -438,6 +484,7 @@ export const taskRunViewSchema = z
     command: commandViewSchema.nullable(),
     commandEvents: z.array(commandEventSchema),
     deskMotionProgress: z.array(deskMotionProgressSchema).max(101),
+    completedSteps: z.array(completedTaskStepSchema).max(2).optional(),
     events: z.array(taskEventSchema),
     policyDecision: policyDecisionSchema,
   })
@@ -557,6 +604,7 @@ export type TaskPlanRequest = z.infer<typeof taskPlanRequestSchema>;
 export type TaskPlanResponse = z.infer<typeof taskPlanResponseSchema>;
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
 export type TaskRunView = z.infer<typeof taskRunViewSchema>;
+export type CompletedTaskStep = z.infer<typeof completedTaskStepSchema>;
 export type DeskMotionProgress = z.infer<typeof deskMotionProgressSchema>;
 export type WorkstationSnapshot = z.infer<typeof workstationSnapshotSchema>;
 export type RuntimeObservation = z.infer<typeof runtimeObservationSchema>;

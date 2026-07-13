@@ -135,6 +135,45 @@ describe("TaskSpec contract", () => {
     });
   });
 
+  it("accepts one protected desk-then-lumbar profile and rejects reversed order", () => {
+    const profile = {
+      schemaVersion: 1,
+      taskId: "task-profile-1",
+      goal: "restore_profile",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: ["Desk movement area is clear"],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 780 },
+          },
+        },
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    };
+
+    expect(taskSpecSchema.parse(profile).steps).toHaveLength(2);
+    expect(
+      taskSpecSchema.safeParse({ ...profile, steps: [profile.steps[0]] })
+        .success,
+    ).toBe(false);
+    expect(
+      taskSpecSchema.safeParse({
+        ...profile,
+        steps: [...profile.steps].reverse(),
+      }).success,
+    ).toBe(false);
+  });
+
   it("upgrades schema-v1 station observations with default lumbar support", () => {
     expect(
       workstationSnapshotSchema.parse({
@@ -362,6 +401,24 @@ describe("Task planning contract", () => {
       durationMinutes: 30,
       interruptionPolicy: "normal",
       assumptions: ["The user is seated"],
+    });
+
+    expect(
+      taskPlanDraftSchema.parse({
+        action: "workstation.restore_profile",
+        targetHeightMm: 780,
+        lumbarSupportPercent: 65,
+        durationMinutes: 45,
+        interruptionPolicy: "critical-only",
+        assumptions: ["Desk movement area is clear"],
+      }),
+    ).toEqual({
+      action: "workstation.restore_profile",
+      targetHeightMm: 780,
+      lumbarSupportPercent: 65,
+      durationMinutes: 45,
+      interruptionPolicy: "critical-only",
+      assumptions: ["Desk movement area is clear"],
     });
   });
 

@@ -58,11 +58,11 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { presentDeviceAction } from "@/features/device-action";
+import { presentTask } from "@/features/device-action";
 import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 const examplePrompt =
-  "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.";
+  "Set the desk to 790 mm and lumbar support to 65% for a 45 minute focus session. Only interrupt me for critical issues.";
 
 interface ChatTurn {
   id: number;
@@ -288,8 +288,8 @@ export function AgentPlannerCard({
               <Message from="assistant">
                 <MessageContent>
                   <p>
-                    Tell me the desk height or lumbar support you want. I will
-                    produce one typed action first;{" "}
+                    Tell me the desk height, lumbar support, or both. I will
+                    produce one or two typed actions first;{" "}
                     <strong>nothing moves during planning</strong>.
                   </p>
                 </MessageContent>
@@ -369,8 +369,7 @@ function ChatTurnMessage({
   startDisabled,
   onStart,
 }: ChatTurnMessageProps) {
-  const action = turn.plan?.task.steps[0].action;
-  const presentation = action ? presentDeviceAction(action) : undefined;
+  const presentation = turn.plan ? presentTask(turn.plan.task) : undefined;
 
   return (
     <>
@@ -406,15 +405,21 @@ function ChatTurnMessage({
         <Message from="assistant">
           <MessageContent className="w-full rounded-lg border bg-card p-3">
             <p className="text-sm">
-              I prepared one protected workstation motion. Review the typed
-              TaskSpec before creating a durable run.
+              I prepared {turn.plan.task.steps.length} protected workstation
+              {turn.plan.task.steps.length === 1 ? " motion" : " motions"}.
+              Review the typed TaskSpec before creating a durable run.
             </p>
             <Task>
               <TaskTrigger title="Generated TaskSpec" />
               <TaskContent>
-                <TaskItem className="font-mono text-foreground">
-                  {presentation?.capabilityId} · {presentation?.target}
-                </TaskItem>
+                {presentation?.actions.map((action) => (
+                  <TaskItem
+                    key={action.capabilityId}
+                    className="font-mono text-foreground"
+                  >
+                    {action.capabilityId} · {action.target}
+                  </TaskItem>
+                ))}
                 <TaskItem>
                   Focus duration: {turn.plan.task.constraints.durationMinutes}{" "}
                   minutes
@@ -480,7 +485,8 @@ function RunConfirmationMessage({
   onCancel,
 }: RunConfirmationMessageProps) {
   const approvalId = run.approval?.approvalId;
-  const presentation = presentDeviceAction(run.task.steps[0].action);
+  const presentation = presentTask(run.task);
+  const commandCount = run.task.steps.length;
 
   if (
     run.status === "awaiting_approval" &&
@@ -495,12 +501,14 @@ function RunConfirmationMessage({
             state="approval-requested"
           >
             <ConfirmationTitle>
-              Device action · {presentation.capabilityId}
+              {commandCount === 1 ? "Device action" : "Device workflow"} ·{" "}
+              {presentation.capabilityId}
             </ConfirmationTitle>
             <ConfirmationRequest>
               <p className="text-sm">
                 {presentation.approvalSummary} This approval is scoped to one
-                run and one exact command.
+                run and {commandCount} exact
+                {commandCount === 1 ? " command" : " ordered commands"}.
               </p>
             </ConfirmationRequest>
             <ConfirmationActions className="w-full justify-stretch">
@@ -517,7 +525,11 @@ function RunConfirmationMessage({
                 disabled={isActing}
                 onClick={() => void onApprove(run)}
               >
-                {isActing ? "Working…" : "Approve motion"}
+                {isActing
+                  ? "Working…"
+                  : commandCount === 1
+                    ? "Approve motion"
+                    : "Approve 2 motions"}
               </ConfirmationAction>
             </ConfirmationActions>
           </Confirmation>

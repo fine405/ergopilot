@@ -14,6 +14,11 @@ struct CrashBeforeStationJournal {
     snapshot_calls: usize,
 }
 
+struct CrashBeforeSecondStationJournal {
+    simulator: SqliteSimulator,
+    snapshot_calls: usize,
+}
+
 struct ReadbackFailureDevice {
     snapshot: WorkstationSnapshot,
     fail_next_snapshot: bool,
@@ -115,6 +120,24 @@ impl DeviceAdapter for CrashBeforeStationJournal {
         self.snapshot_calls += 1;
         if self.snapshot_calls == 2 {
             panic!("simulated process crash before the station journal write");
+        }
+        self.simulator.snapshot(observed_at_ms)
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        self.simulator.apply(action, expected_state_version)
+    }
+}
+
+impl DeviceAdapter for CrashBeforeSecondStationJournal {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        self.snapshot_calls += 1;
+        if self.snapshot_calls == 4 {
+            panic!("simulated crash before the second station journal write");
         }
         self.simulator.snapshot(observed_at_ms)
     }
@@ -532,6 +555,49 @@ fn restart_dispatches_a_persisted_intent_if_the_station_journal_is_still_empty()
 
     assert_eq!(recovered.status, TaskRunStatus::Completed);
     assert_eq!(restarted.station_snapshot(1_201).unwrap().movement_count, 1);
+}
+
+#[test]
+fn restart_executes_only_the_remaining_profile_step_after_a_mid_run_crash() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let crashing_device = CrashBeforeSecondStationJournal {
+        simulator,
+        snapshot_calls: 0,
+    };
+    let authority = policy_authority();
+    let mut first_process =
+        TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::restore_profile("task-profile-mid-run-crash", "user-1", 780, 65),
+            1_000,
+        )
+        .unwrap();
+
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        first_process
+            .approve(&awaiting.run_id, "user-1", 1_100)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(first_process);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let interrupted = restarted.inspect(&awaiting.run_id).unwrap();
+    assert_eq!(interrupted.status, TaskRunStatus::Executing);
+    assert_eq!(interrupted.completed_steps.len(), 1);
+
+    let completed = restarted.reconcile(&awaiting.run_id, 1_200).unwrap();
+    let snapshot = restarted.station_snapshot(1_201).unwrap();
+
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(completed.completed_steps.len(), 2);
+    assert_eq!(snapshot.desk_height_mm, 780);
+    assert_eq!(snapshot.lumbar_support_percent, 65);
+    assert_eq!(snapshot.movement_count, 2);
 }
 
 #[test]
