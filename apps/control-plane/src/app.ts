@@ -6,6 +6,7 @@ import {
   plannerAttemptsResponseSchema,
   plannerProviderIdSchema,
   type TaskPlanRequest,
+  type TaskPlanResponse,
   taskPlanRequestSchema,
   taskSpecSchema,
 } from "@ergopilot/contracts";
@@ -15,6 +16,11 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 
+import {
+  createMemoryPlannerAttemptStore,
+  type PlannerAttemptStore,
+  PlannerAttemptStoreError,
+} from "./planner-attempt-store";
 import type { StationClient } from "./station-client";
 import { StationRpcError } from "./station-client";
 import {
@@ -27,6 +33,7 @@ import {
 export interface AppOptions {
   now?: () => number;
   allowedOrigin?: string;
+  plannerAttemptStore?: PlannerAttemptStore;
   planners?: TaskPlannerRegistry;
 }
 
@@ -43,21 +50,30 @@ type EmptyHookResponse = Record<never, never>;
 export function createApp(station: StationClient, options: AppOptions = {}) {
   const now = options.now ?? Date.now;
   const allowedOrigin = options.allowedOrigin ?? "http://localhost:3000";
-  const plannerAttempts: PlannerAttempt[] = [];
-  const recordPlannerAttempt = (
+  const plannerAttemptStore =
+    options.plannerAttemptStore ?? createMemoryPlannerAttemptStore();
+  const recordPlannerAttempt = async (
     context: Context<AppEnvironment>,
     attempt: unknown,
   ) => {
-    plannerAttempts.unshift(plannerAttemptSchema.parse(attempt));
-    plannerAttempts.splice(100);
+    try {
+      await plannerAttemptStore.record(plannerAttemptSchema.parse(attempt));
+    } catch (error) {
+      throw error instanceof PlannerAttemptStoreError
+        ? error
+        : new PlannerAttemptStoreError(
+            "planner attempt store could not be written",
+            { cause: error },
+          );
+    }
     context.set("plannerAttemptRecorded", true);
   };
-  const recordUnattributedPlannerFailure = (
+  const recordUnattributedPlannerFailure = async (
     context: Context<AppEnvironment>,
     errorCode: "invalid_request" | "payload_too_large",
   ) => {
     const startedAtMs = context.get("plannerStartedAtMs");
-    recordPlannerAttempt(context, {
+    await recordPlannerAttempt(context, {
       traceId: context.get("plannerTraceId"),
       provider: null,
       model: null,
@@ -75,7 +91,7 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     "json",
     EmptyHookResponse,
     typeof taskPlanRequestSchema
-  > = (result, context) => {
+  > = async (result, context) => {
     if (result.success) return;
     const providerCandidate =
       typeof result.data === "object" && result.data !== null
@@ -84,7 +100,7 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     const parsedProvider = plannerProviderIdSchema.safeParse(providerCandidate);
     const provider = parsedProvider.success ? parsedProvider.data : null;
     const startedAtMs = context.get("plannerStartedAtMs");
-    recordPlannerAttempt(context, {
+    await recordPlannerAttempt(context, {
       traceId: context.get("plannerTraceId"),
       provider,
       model: provider === null ? null : PLANNER_PROVIDERS[provider].model,
@@ -124,9 +140,12 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       "/api/*",
       bodyLimit({
         maxSize: 64 * 1024,
-        onError: (context) => {
+        onError: async (context) => {
           if (context.req.path === "/api/task-plans") {
-            recordUnattributedPlannerFailure(context, "payload_too_large");
+            await recordUnattributedPlannerFailure(
+              context,
+              "payload_too_large",
+            );
           }
           return context.json(
             {
@@ -148,7 +167,9 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     )
     .get("/api/planner-attempts", (context) =>
       context.json(
-        plannerAttemptsResponseSchema.parse({ attempts: plannerAttempts }),
+        plannerAttemptsResponseSchema.parse({
+          attempts: plannerAttemptStore.list(),
+        }),
       ),
     )
     .post(
@@ -164,12 +185,12 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
         const request = context.req.valid("json");
         const traceId = context.get("plannerTraceId");
         const startedAtMs = context.get("plannerStartedAtMs");
-        const recordAttempt = (
+        const recordAttempt = async (
           outcome: PlannerAttempt["outcome"],
           taskId: string | null,
           errorCode: PlannerAttempt["errorCode"],
         ) => {
-          recordPlannerAttempt(context, {
+          await recordPlannerAttempt(context, {
             traceId,
             provider: request.provider,
             model: PLANNER_PROVIDERS[request.provider].model,
@@ -182,7 +203,7 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
         };
         const planner = options.planners?.[request.provider];
         if (!planner) {
-          recordAttempt("failed", null, "provider_unavailable");
+          await recordAttempt("failed", null, "provider_unavailable");
           return context.json(
             {
               error: {
@@ -193,18 +214,19 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
             503,
           );
         }
+        let plan: TaskPlanResponse;
         try {
-          const plan = await planner.plan(request);
-          recordAttempt("succeeded", plan.task.taskId, null);
-          return context.json(plan);
+          plan = await planner.plan(request);
         } catch (error) {
-          recordAttempt(
+          await recordAttempt(
             "failed",
             null,
             error instanceof PlannerError ? error.code : "internal_error",
           );
           throw error;
         }
+        await recordAttempt("succeeded", plan.task.taskId, null);
+        return context.json(plan);
       },
     )
     .post(
@@ -246,14 +268,14 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       404,
     ),
   );
-  app.onError((error, context) => {
+  app.onError(async (error, context) => {
     if (
       error instanceof HTTPException &&
       error.status === 400 &&
       context.req.path === "/api/task-plans" &&
       !context.get("plannerAttemptRecorded")
     ) {
-      recordUnattributedPlannerFailure(context, "invalid_request");
+      await recordUnattributedPlannerFailure(context, "invalid_request");
       return context.json(
         {
           error: {
@@ -262,6 +284,17 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
           },
         },
         400,
+      );
+    }
+    if (error instanceof PlannerAttemptStoreError) {
+      return context.json(
+        {
+          error: {
+            code: "trace_persistence_failed",
+            message: "planner attempt evidence could not be persisted",
+          },
+        },
+        503,
       );
     }
     if (error instanceof PlannerError) {

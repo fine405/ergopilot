@@ -1,8 +1,10 @@
+import { resolve } from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 
 import { createApp } from "./app";
+import { openFilePlannerAttemptStore } from "./planner-attempt-store";
 import { createProcessStationClient } from "./station-client";
 import { createConfiguredTaskPlanners } from "./task-planner";
 
@@ -15,8 +17,17 @@ try {
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const hostname = "127.0.0.1";
 const allowedOrigin = process.env.ERGOPILOT_WEB_ORIGIN;
+const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const plannerAttemptStore = await openFilePlannerAttemptStore(
+  resolve(
+    workspaceRoot,
+    process.env.ERGOPILOT_PLANNER_ATTEMPTS_PATH ??
+      "target/ergopilot-planner-attempts.json",
+  ),
+);
 const app = createApp(createProcessStationClient(), {
   ...(allowedOrigin ? { allowedOrigin } : {}),
+  plannerAttemptStore,
   planners: createConfiguredTaskPlanners(),
 });
 const server = serve({ fetch: app.fetch, hostname, port });

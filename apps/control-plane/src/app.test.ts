@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "./app";
+import { createMemoryPlannerAttemptStore } from "./planner-attempt-store";
 import type { StationClient } from "./station-client";
 import { PlannerError, type TaskPlanner } from "./task-planner";
 
@@ -177,6 +178,78 @@ describe("control-plane API", () => {
     });
     expect(JSON.stringify(body)).not.toContain("Private workstation request");
     expect(JSON.stringify(body)).not.toContain("private-user");
+  });
+
+  it("restores planner attempts when a new app uses the same store", async () => {
+    const plannerAttemptStore = createMemoryPlannerAttemptStore();
+    const firstApp = createApp(fakeStation(), {
+      plannerAttemptStore,
+      planners: { deepseek: fakePlanner() },
+    });
+    await firstApp.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "Prepare a persisted trace",
+        requestedBy: "user-1",
+      }),
+    });
+
+    const restartedApp = createApp(fakeStation(), { plannerAttemptStore });
+    const response = await restartedApp.request("/api/planner-attempts");
+
+    expect(await response.json()).toMatchObject({
+      attempts: [
+        {
+          provider: "deepseek",
+          outcome: "succeeded",
+          taskId: "task-api-1",
+        },
+      ],
+    });
+  });
+
+  it("fails closed without exposing storage details when trace persistence fails", async () => {
+    const planner = fakePlanner();
+    const app = createApp(fakeStation(), {
+      plannerAttemptStore: {
+        list: () => [],
+        record: vi.fn(async () => {
+          throw new Error("sensitive path: /private/trace-store.json");
+        }),
+      },
+      planners: { deepseek: planner },
+    });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "Prepare a plan with durable evidence",
+        requestedBy: "user-1",
+      }),
+    });
+
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: {
+        code: "trace_persistence_failed",
+        message: "planner attempt evidence could not be persisted",
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("/private/trace-store.json");
+    expect(planner.plan).toHaveBeenCalledOnce();
+
+    const malformedResponse = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"provider":"deepseek"',
+    });
+    expect(malformedResponse.status).toBe(503);
+    expect(await malformedResponse.json()).toEqual(body);
   });
 
   it("rejects a disabled provider without falling back to another one", async () => {

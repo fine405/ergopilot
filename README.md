@@ -59,6 +59,10 @@ Open <http://localhost:3000>. The control plane listens on
 <http://localhost:8787>. Local development has a non-production policy key;
 copy `.env.example` to `.env` when you want to override paths, origins or
 credentials. Relative station paths are resolved from the repository root.
+Planner attempts are atomically persisted to
+`target/ergopilot-planner-attempts.json` by default, so the latest 100 traces
+survive a control-plane restart. Override the path with
+`ERGOPILOT_PLANNER_ATTEMPTS_PATH`.
 Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
 matching Mastra planner providers. The provider selector shows missing-key
 providers as disabled. Without either key, the deterministic task builder and
