@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { controlPlane } from "@/lib/control-plane";
 
 import { AgentPlannerCard } from "./agent-planner-card";
+import { PlannerAttemptsCard } from "./planner-attempts-card";
 import { RunOverview } from "./run-overview";
 import { StationCard } from "./station-card";
 import { TaskComposer } from "./task-composer";
@@ -44,9 +45,18 @@ export function OperatorConsole({
     enabled: hydrated,
     retry: false,
   });
+  const plannerAttemptsQuery = useQuery({
+    queryKey: ["planner-attempts"],
+    queryFn: () => controlPlane.plannerAttempts(),
+    enabled: hydrated,
+    retry: false,
+  });
 
   const planMutation = useMutation({
     mutationFn: (request: TaskPlanRequest) => controlPlane.planTask(request),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["planner-attempts"] });
+    },
   });
   const startMutation = useMutation({
     mutationFn: (task: TaskSpec) => controlPlane.startTask(task),
@@ -172,7 +182,7 @@ export function OperatorConsole({
           />
         </aside>
 
-        <section className="lg:col-span-8 xl:col-span-9">
+        <section className="space-y-6 lg:col-span-8 xl:col-span-9">
           <RunOverview
             run={runQuery.data}
             isLoading={Boolean(runId) && runQuery.isLoading}
@@ -180,6 +190,16 @@ export function OperatorConsole({
             isMutating={isMutating}
             onApprove={(run) => approveMutation.mutate(run)}
             onReconcile={(run) => reconcileMutation.mutate(run)}
+          />
+          <PlannerAttemptsCard
+            attempts={plannerAttemptsQuery.data?.attempts}
+            isLoading={
+              plannerAttemptsQuery.isLoading || plannerAttemptsQuery.isFetching
+            }
+            error={errorMessage(plannerAttemptsQuery.error)}
+            onRefresh={() => {
+              void plannerAttemptsQuery.refetch();
+            }}
           />
         </section>
       </main>

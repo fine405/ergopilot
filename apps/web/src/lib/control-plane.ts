@@ -1,5 +1,7 @@
 import {
+  type PlannerAttemptsResponse,
   type PlannerProvidersResponse,
+  plannerAttemptsResponseSchema,
   plannerProvidersResponseSchema,
   type TaskPlanRequest,
   type TaskPlanResponse,
@@ -29,6 +31,7 @@ export class ControlPlaneError extends Error {
 }
 
 export interface ControlPlane {
+  plannerAttempts(): Promise<PlannerAttemptsResponse>;
   plannerProviders(): Promise<PlannerProvidersResponse>;
   planTask(request: TaskPlanRequest): Promise<TaskPlanResponse>;
   startTask(task: TaskSpec): Promise<TaskRunView>;
@@ -43,6 +46,11 @@ export class HonoControlPlane implements ControlPlane {
 
   constructor(baseUrl: string) {
     this.#client = hc<AppType>(baseUrl);
+  }
+
+  async plannerAttempts(): Promise<PlannerAttemptsResponse> {
+    const response = await this.#client.api["planner-attempts"].$get();
+    return parseResponse(response, plannerAttemptsResponseSchema);
   }
 
   async plannerProviders(): Promise<PlannerProvidersResponse> {

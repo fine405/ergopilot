@@ -592,13 +592,15 @@ Exit criterion: every success and failure in the demo has inspectable evidence.
 Current milestone: the Hono control plane exposes the latest 100 process-local
 planning attempts, including request-validation failures, with trace ID,
 attributable provider/model, duration, outcome, task ID and stable error code.
-Prompts, user identifiers and credentials are excluded. A deterministic scorer
-now provides a six-case smoke suite and an explicit 30-case dataset covering
-English/Chinese intent, unit and policy paraphrases, safety boundaries and
-prompt-injection attempts. Runs emit versioned, prompt-free JSON reports with
-per-case latency plus p50/p95; the first full DeepSeek baseline passed 30/30
-cases with 2,860 ms p50 and 5,631 ms p95 latency. Persistent trace export,
-repeated provider comparison and tool-call scoring remain future slices.
+Prompts, user identifiers and credentials are excluded. The Web operator
+console renders the same privacy-safe evidence and refreshes it after planning.
+A deterministic scorer now provides a six-case smoke suite and an explicit
+30-case dataset covering English/Chinese intent, unit and policy paraphrases,
+safety boundaries and prompt-injection attempts. Runs emit versioned,
+prompt-free JSON reports with per-case latency plus p50/p95; the first full
+DeepSeek baseline passed 30/30 cases with 2,860 ms p50 and 5,631 ms p95 latency.
+Persistent trace export, repeated provider comparison and tool-call scoring
+remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 
