@@ -596,8 +596,9 @@ credentials are excluded. A deterministic scorer now provides a six-case smoke
 suite and an explicit 30-case dataset covering English/Chinese intent, unit and
 policy paraphrases, safety boundaries and prompt-injection attempts. Runs emit
 versioned, prompt-free JSON reports with per-case latency plus p50/p95; the
-initial live DeepSeek smoke run passed 6/6 cases. Request-validation telemetry,
-tool-call scoring and a measured 30-case baseline remain future slices.
+first full DeepSeek baseline passed 30/30 cases with 2,860 ms p50 and 5,631 ms
+p95 latency. Request-validation telemetry, repeated provider comparison and
+tool-call scoring remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 

@@ -85,6 +85,9 @@ Pass `full` explicitly to run the 30-case suite:
 pnpm eval:planner deepseek full
 ```
 
+See the measured methodology, results and limitations in
+[`docs/PLANNER_EVALUATION.md`](docs/PLANNER_EVALUATION.md).
+
 Run all verification gates:
 
 ```bash
