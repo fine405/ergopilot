@@ -10,7 +10,7 @@ const config = defineConfig(({ mode }) => ({
   build: { outDir: mode === "desktop" ? "dist-desktop" : "dist" },
   envDir: "../..",
   resolve: { tsconfigPaths: true },
-  server: { port: 3000, strictPort: true },
+  server: { forwardConsole: false, port: 3000, strictPort: true },
   plugins: [
     devtools(),
     tailwindcss(),
