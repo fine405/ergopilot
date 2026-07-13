@@ -15,12 +15,26 @@ import {
   workstationSnapshotSchema,
 } from "@ergopilot/contracts";
 import type { AppType } from "@ergopilot/control-plane";
+import { isTauri, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { hc } from "hono/client";
 import { z } from "zod";
 
 const apiErrorSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
+const stationCommandErrorSchema = z.object({
+  code: z.string(),
+  message: z.string(),
+});
+
+type PlannerControlPlane = Pick<
+  ControlPlane,
+  "plannerAttempts" | "plannerProviders" | "planTask"
+>;
+type InvokeCommand = <T>(
+  command: string,
+  args?: Record<string, unknown>,
+) => Promise<T>;
 
 export class ControlPlaneError extends Error {
   constructor(
@@ -202,6 +216,179 @@ export class HonoControlPlane implements ControlPlane {
   }
 }
 
+export class TauriControlPlane implements ControlPlane {
+  constructor(
+    readonly planner: PlannerControlPlane,
+    readonly invokeCommand: InvokeCommand = tauriInvoke,
+    readonly now: () => number = Date.now,
+    readonly pollIntervalMs = 100,
+  ) {}
+
+  plannerAttempts(): Promise<PlannerAttemptsResponse> {
+    return this.planner.plannerAttempts();
+  }
+
+  plannerProviders(): Promise<PlannerProvidersResponse> {
+    return this.planner.plannerProviders();
+  }
+
+  planTask(request: TaskPlanRequest): Promise<TaskPlanResponse> {
+    return this.planner.planTask(request);
+  }
+
+  startTask(task: TaskSpec): Promise<TaskRunView> {
+    return this.invokeStation(
+      { method: "task.start", params: { task, nowMs: this.now() } },
+      taskRunViewSchema,
+    );
+  }
+
+  inspectTask(runId: string): Promise<TaskRunView> {
+    return this.invokeStation(
+      { method: "task.inspect", params: { runId } },
+      taskRunViewSchema,
+    );
+  }
+
+  approveTask(runId: string, approvedBy: string): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "task.approve",
+        params: { runId, approvedBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  cancelTask(runId: string, cancelledBy: string): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "task.cancel",
+        params: { runId, cancelledBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  demoApproveTaskWithAckLoss(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "demo.task.approve_with_ack_loss",
+        params: { runId, approvedBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  demoApproveTaskWithDeviceOffline(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "demo.task.approve_with_device_offline",
+        params: { runId, approvedBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  demoApproveTaskWithDeviceUnavailableBeforeDispatch(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "demo.task.approve_with_device_unavailable_before_dispatch",
+        params: { runId, approvedBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  resumeTask(runId: string): Promise<TaskRunView> {
+    return this.invokeStation(
+      { method: "task.resume", params: { runId, nowMs: this.now() } },
+      taskRunViewSchema,
+    );
+  }
+
+  reconcileTask(runId: string): Promise<TaskRunView> {
+    return this.invokeStation(
+      { method: "task.reconcile", params: { runId, nowMs: this.now() } },
+      taskRunViewSchema,
+    );
+  }
+
+  stationSnapshot(): Promise<WorkstationSnapshot> {
+    return this.invokeStation(
+      {
+        method: "station.snapshot",
+        params: { observedAtMs: this.now() },
+      },
+      workstationSnapshotSchema,
+    );
+  }
+
+  subscribeTaskRun(
+    runId: string,
+    onObservation: (observation: RuntimeObservation) => void,
+    onError: () => void = () => undefined,
+  ) {
+    let active = true;
+    let polling = false;
+    const poll = async () => {
+      if (!active || polling) return;
+      polling = true;
+      try {
+        const [run, station] = await Promise.all([
+          this.inspectTask(runId),
+          this.stationSnapshot(),
+        ]);
+        if (active)
+          onObservation(runtimeObservationSchema.parse({ run, station }));
+      } catch {
+        if (active) onError();
+      } finally {
+        polling = false;
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), this.pollIntervalMs);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }
+
+  private async invokeStation<T>(
+    request: Record<string, unknown>,
+    schema: z.ZodType<T>,
+  ): Promise<T> {
+    try {
+      const result = await this.invokeCommand<unknown>("station_rpc", {
+        request,
+      });
+      return schema.parse(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) throw error;
+      const parsed = stationCommandErrorSchema.safeParse(error);
+      if (parsed.success) {
+        throw new ControlPlaneError(parsed.data.code, parsed.data.message);
+      }
+      throw new ControlPlaneError(
+        "station_rpc_error",
+        error instanceof Error
+          ? error.message
+          : "Desktop station command failed",
+      );
+    }
+  }
+}
+
 function parseRuntimeObservation(data: string) {
   try {
     const result = runtimeObservationSchema.safeParse(JSON.parse(data));
@@ -232,6 +419,11 @@ async function parseResponse<T>(
   return schema.parse(body);
 }
 
-export const controlPlane = new HonoControlPlane(
-  import.meta.env.VITE_CONTROL_PLANE_URL ?? "http://localhost:8787",
-);
+export function createControlPlane(): ControlPlane {
+  const hono = new HonoControlPlane(
+    import.meta.env.VITE_CONTROL_PLANE_URL ?? "http://localhost:8787",
+  );
+  return isTauri() ? new TauriControlPlane(hono) : hono;
+}
+
+export const controlPlane = createControlPlane();

@@ -184,6 +184,14 @@ pub fn run_rpc(
     run_rpc_with_motion_step_delay(database_path, authority, request, output, Duration::ZERO)
 }
 
+pub fn invoke_rpc(
+    database_path: impl AsRef<Path>,
+    authority: PolicyAuthority,
+    request: RpcRequest,
+) -> Result<serde_json::Value, DemoError> {
+    invoke_rpc_with_motion_step_delay(database_path, authority, request, Duration::ZERO)
+}
+
 pub fn run_rpc_with_motion_step_delay(
     database_path: impl AsRef<Path>,
     authority: PolicyAuthority,
@@ -191,6 +199,19 @@ pub fn run_rpc_with_motion_step_delay(
     output: &mut impl Write,
     motion_step_delay: Duration,
 ) -> Result<(), DemoError> {
+    let result =
+        invoke_rpc_with_motion_step_delay(database_path, authority, request, motion_step_delay)?;
+    serde_json::to_writer(&mut *output, &json!({ "ok": true, "result": result }))?;
+    writeln!(output)?;
+    Ok(())
+}
+
+pub fn invoke_rpc_with_motion_step_delay(
+    database_path: impl AsRef<Path>,
+    authority: PolicyAuthority,
+    request: RpcRequest,
+    motion_step_delay: Duration,
+) -> Result<serde_json::Value, DemoError> {
     let database_path = database_path.as_ref();
     if let Some(parent) = database_path
         .parent()
@@ -262,9 +283,7 @@ pub fn run_rpc_with_motion_step_delay(
             serde_json::to_value(runtime.station_snapshot(observed_at_ms)?)?
         }
     };
-    serde_json::to_writer(&mut *output, &json!({ "ok": true, "result": result }))?;
-    writeln!(output)?;
-    Ok(())
+    Ok(result)
 }
 
 pub fn run_approval_demo(

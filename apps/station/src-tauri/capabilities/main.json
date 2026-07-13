@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Core permissions for the bundled ErgoPilot Station window.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

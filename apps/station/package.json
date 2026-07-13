@@ -1,0 +1,16 @@
+{
+  "name": "@ergopilot/station",
+  "private": true,
+  "scripts": {
+    "build": "tauri build --no-bundle",
+    "check": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "dev": "tauri dev",
+    "format:check": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "typecheck": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "web": "workspace:*"
+  }
+}

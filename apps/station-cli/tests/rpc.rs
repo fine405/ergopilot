@@ -1,6 +1,6 @@
 use policy_core::PolicyAuthority;
 use serde_json::{json, Value};
-use station_cli::{run_rpc, DemoError, RpcRequest, MAX_RPC_INPUT_BYTES};
+use station_cli::{invoke_rpc, run_rpc, DemoError, RpcRequest, MAX_RPC_INPUT_BYTES};
 use station_core::{DeviceError, RuntimeError};
 use std::{
     io::{self, Write},
@@ -180,6 +180,26 @@ fn independent_rpc_calls_share_the_durable_task_runtime() {
     );
     assert_eq!(snapshot["result"]["deskHeightMm"], 780);
     assert_eq!(snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
+fn in_process_adapter_returns_the_typed_result_without_a_transport_envelope() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+
+    let snapshot = invoke_rpc(
+        &database,
+        authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_000,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(snapshot["stationId"], "station-sim-1");
+    assert_eq!(snapshot["deskHeightMm"], 720);
+    assert_eq!(snapshot["lumbarSupportPercent"], 35);
 }
 
 #[test]

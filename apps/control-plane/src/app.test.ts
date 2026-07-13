@@ -89,6 +89,29 @@ const plannedTask: TaskPlanResponse = {
 };
 
 describe("control-plane API", () => {
+  it.each([
+    "tauri://localhost",
+    "http://tauri.localhost",
+  ])("allows the trusted desktop origin %s", async (origin) => {
+    const app = createApp(fakeStation());
+
+    const response = await app.request("/api/planner-providers", {
+      headers: { origin },
+    });
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+  });
+
+  it("does not widen desktop CORS to arbitrary origins", async () => {
+    const app = createApp(fakeStation());
+
+    const response = await app.request("/api/planner-providers", {
+      headers: { origin: "https://untrusted.example" },
+    });
+
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
   it("exposes the versioned device capability catalog", async () => {
     const response = await createApp(fakeStation()).request(
       "/api/capabilities",

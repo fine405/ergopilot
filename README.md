@@ -19,8 +19,8 @@ The implementation plan and acceptance criteria are in
 
 ## Current vertical slice
 
-The local Rust runtime, Hono API and TanStack Start operator console are
-runnable end to end. The current slice implements:
+The local Rust runtime, Hono API, TanStack Start operator console and Tauri
+desktop station are runnable end to end. The current slice implements:
 
 - a strict, shared `TaskSpec` and `TaskRunView` JSON contract;
 - an HMAC-signed policy grant bound to one run, command, action and expected
@@ -58,17 +58,19 @@ runnable end to end. The current slice implements:
   safety envelopes, approval rules and verified simulator state;
 - a Three.js digital twin whose desk actuator and chair lumbar pad follow Rust
   telemetry, with Rapier providing visual gravity and collision simulation;
+- a Tauri 2 desktop host that embeds the same TanStack UI while keeping the
+  station database and policy signing key behind one typed Rust IPC command;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
 - URL-persisted run selection, so an in-progress approval survives refresh.
 
-The loopback-only control plane currently launches a short-lived
-`station-cli --rpc` process for each local request. Every process opens the same
-SQLite journal, so the boundary already exercises serialization and
-restart-safe state rather than an in-memory mock. The production path will add
-authenticated identity and replace this adapter with outbound Tauri/station
-connectivity, a Durable Object session and a durable cloud workflow; those
-parts are not claimed as implemented yet.
+The Web control plane launches a short-lived `station-cli --rpc` process for
+each local station request. The desktop build instead invokes the same Rust
+runtime in process through Tauri and stores its SQLite journal and generated
+policy key in the OS application-data directory. Natural-language planning is
+still delegated to the loopback Hono service in this slice. Authenticated
+remote coordination, a Durable Object session and a durable cloud workflow
+remain future work.
 
 ## Run locally
 
@@ -91,6 +93,46 @@ Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
 matching Mastra planner providers. The provider selector shows missing-key
 providers as disabled. Without either key, the deterministic task builder and
 complete execution path remain usable.
+
+### Run the desktop station
+
+The desktop UI is the same TanStack/Three.js application, but station and task
+operations use local Tauri IPC instead of HTTP. Start the Hono service for the
+optional OpenAI/DeepSeek planner in one terminal:
+
+```bash
+cargo build -p station-cli
+pnpm --filter @ergopilot/control-plane dev
+```
+
+Then start the desktop app in a second terminal:
+
+```bash
+pnpm desktop:dev
+```
+
+`desktop:dev` owns port 3000 for its Vite UI, so do not run `pnpm dev` at the
+same time. A missing planner service does not remove local station authority,
+but provider discovery and natural-language planning will be unavailable.
+
+Build the current unsigned local executable with:
+
+```bash
+pnpm desktop:build
+```
+
+On macOS the binary is
+`apps/station/src-tauri/target/release/ergopilot-station`. Tauri keeps
+`ergopilot-station.sqlite` and `policy.key` in its application-data directory
+(normally `~/Library/Application Support/com.ergopilot.station/` on macOS),
+not in the Web UI or environment variables. Create and approve a manual task,
+close the app, and reopen it to verify that the station snapshot persists. The
+automated restart test also proves that a pending task can be approved by a
+new desktop-host instance:
+
+```bash
+pnpm --filter @ergopilot/station test
+```
 
 To exercise uncertain-outcome recovery in the operator console, create a
 manual task, open **Review & approve**, choose **Approve + lose ACK (demo)**,
@@ -192,9 +234,10 @@ receive authority over policy or device execution.
 - **assistant-ui, deferred:** useful only if multi-thread conversation becomes
   a real product requirement; ErgoPilot remains task-first rather than
   chat-first.
-- **Cloudflare + Tauri, planned:** remote coordination and local device access.
-  The current process adapter keeps those deployment concerns out of the first
-  reliability proof.
+- **Tauri 2:** implemented local desktop boundary for the same operator UI,
+  with Rust-owned SQLite, policy key and task lifecycle.
+- **Cloudflare, planned:** authenticated remote coordination and durable cloud
+  workflow remain outside the current local reliability proof.
 
 ## Key modules
 
@@ -203,6 +246,7 @@ receive authority over policy or device execution.
   adapter;
 - `apps/mcp-server`: stdio MCP tools over the existing control-plane contract;
 - `apps/web`: TanStack Start operator console;
+- `apps/station`: Tauri desktop host and local Rust IPC boundary;
 - `apps/station-cli`: JSON RPC boundary and executable recovery demos;
 - `crates/ergopilot-protocol`: versioned Rust command and event types;
 - `crates/policy-core`: deterministic decisions and signed grants;

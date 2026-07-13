@@ -10,6 +10,8 @@
     "check": "cargo check --workspace && pnpm -r --if-present typecheck",
     "demo": "cargo run -p station-cli -- target/ergopilot-demo.sqlite",
     "demo:approval": "cargo run -p station-cli -- --approval target/ergopilot-approval-demo.sqlite",
+    "desktop:build": "pnpm --filter @ergopilot/station build",
+    "desktop:dev": "pnpm --filter @ergopilot/station dev",
     "dev": "cargo build -p station-cli && concurrently -k -n api,web -c cyan,green \"pnpm --filter @ergopilot/control-plane dev\" \"pnpm --filter web dev\"",
     "eval:planner": "pnpm --filter @ergopilot/control-plane eval:planner",
     "format": "cargo fmt --all --check && pnpm -r --if-present format:check",
@@ -18,6 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
+    "@tauri-apps/cli": "2.11.4",
     "@types/node": "^26.1.1",
     "concurrently": "^10.0.3",
     "typescript": "^7.0.2",

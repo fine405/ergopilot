@@ -84,7 +84,11 @@ function stationRpcStatus(
 
 export function createApp(station: StationClient, options: AppOptions = {}) {
   const now = options.now ?? Date.now;
-  const allowedOrigin = options.allowedOrigin ?? "http://localhost:3000";
+  const allowedOrigins = [
+    options.allowedOrigin ?? "http://localhost:3000",
+    "tauri://localhost",
+    "http://tauri.localhost",
+  ];
   const plannerAttemptStore =
     options.plannerAttemptStore ?? createMemoryPlannerAttemptStore();
   const recordPlannerAttempt = async (
@@ -159,7 +163,7 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     .use(
       "/api/*",
       cors({
-        origin: allowedOrigin,
+        origin: allowedOrigins,
         exposeHeaders: ["X-ErgoPilot-Trace-Id"],
       }),
     )
