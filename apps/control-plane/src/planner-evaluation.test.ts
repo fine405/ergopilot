@@ -1,7 +1,16 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import type { TaskPlanResponse } from "@ergopilot/contracts";
 import { describe, expect, it, vi } from "vitest";
 
-import { runPlannerEvaluation, scorePlannerOutput } from "./planner-evaluation";
+import {
+  PLANNER_EVALUATION_CASES,
+  PLANNER_EVALUATION_SMOKE_CASES,
+  runPlannerEvaluation,
+  savePlannerEvaluationReport,
+  scorePlannerOutput,
+} from "./planner-evaluation";
 import { PlannerError, type TaskPlanner } from "./task-planner";
 
 const response: TaskPlanResponse = {
@@ -33,6 +42,29 @@ const response: TaskPlanResponse = {
 };
 
 describe("planner evaluation", () => {
+  it("provides a six-case smoke suite and a 30-case full suite", () => {
+    expect(PLANNER_EVALUATION_SMOKE_CASES).toHaveLength(6);
+    expect(PLANNER_EVALUATION_CASES).toHaveLength(30);
+    expect(new Set(PLANNER_EVALUATION_CASES.map(({ id }) => id)).size).toBe(30);
+    expect(PLANNER_EVALUATION_CASES.slice(0, 6)).toEqual(
+      PLANNER_EVALUATION_SMOKE_CASES,
+    );
+    expect(
+      PLANNER_EVALUATION_CASES.find(({ id }) => id === "unsafe-height-high")
+        ?.expected,
+    ).toEqual({
+      durationMinutes: 60,
+      interruptionPolicy: "normal",
+    });
+    expect(
+      PLANNER_EVALUATION_CASES.find(({ id }) => id === "unsafe-duration-high")
+        ?.expected,
+    ).toEqual({
+      heightMm: 760,
+      interruptionPolicy: "normal",
+    });
+  });
+
   it("passes an exact, safe planner output", () => {
     expect(
       scorePlannerOutput(
@@ -188,6 +220,11 @@ describe("planner evaluation", () => {
         interruptionPolicy: "critical-only" as const,
       },
     };
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(130)
+      .mockReturnValueOnce(200)
+      .mockReturnValueOnce(270);
 
     await expect(
       runPlannerEvaluation(planner, "deepseek", [
@@ -199,18 +236,90 @@ describe("planner evaluation", () => {
       totalCases: 2,
       passedCases: 1,
       passRate: 0.5,
+      latencyMs: {
+        p50: 30,
+        p95: 70,
+      },
       results: [
         {
           caseId: "explicit-standing-focus",
           passed: true,
           failures: [],
+          durationMs: 30,
         },
         {
           caseId: "provider-failure",
           passed: false,
           failures: ["planner: generation_failed"],
+          durationMs: 70,
         },
       ],
     });
+  });
+
+  it("reports zero latency percentiles for an empty suite", async () => {
+    const planner: TaskPlanner = { plan: vi.fn<TaskPlanner["plan"]>() };
+
+    await expect(
+      runPlannerEvaluation(planner, "deepseek", []),
+    ).resolves.toMatchObject({
+      latencyMs: { p50: 0, p95: 0 },
+    });
+  });
+
+  it("saves a versioned JSON report without evaluation prompts", async () => {
+    const outputDirectory = await mkdtemp(join(tmpdir(), "ergopilot-eval-"));
+    const report = {
+      provider: "deepseek" as const,
+      totalCases: 1,
+      passedCases: 1,
+      passRate: 1,
+      latencyMs: { p50: 30, p95: 30 },
+      results: [
+        {
+          caseId: "standing-critical",
+          passed: true,
+          failures: [],
+          durationMs: 30,
+          prompt: "result-level secret prompt",
+        },
+      ],
+      prompt: "report-level secret prompt",
+    };
+
+    try {
+      const reportPath = await savePlannerEvaluationReport(
+        report,
+        "smoke",
+        outputDirectory,
+        new Date("2026-07-13T01:02:03.000Z"),
+      );
+
+      expect(basename(reportPath)).toBe(
+        "deepseek-smoke-2026-07-13T01-02-03.000Z.json",
+      );
+      const artifact = JSON.parse(await readFile(reportPath, "utf8"));
+      expect(artifact).toEqual({
+        schemaVersion: 1,
+        generatedAt: "2026-07-13T01:02:03.000Z",
+        suite: "smoke",
+        provider: "deepseek",
+        totalCases: 1,
+        passedCases: 1,
+        passRate: 1,
+        latencyMs: { p50: 30, p95: 30 },
+        results: [
+          {
+            caseId: "standing-critical",
+            passed: true,
+            failures: [],
+            durationMs: 30,
+          },
+        ],
+      });
+      expect(JSON.stringify(artifact)).not.toContain("secret prompt");
+    } finally {
+      await rm(outputDirectory, { recursive: true });
+    }
   });
 });

@@ -71,11 +71,18 @@ pnpm demo
 pnpm demo:approval
 ```
 
-Run the optional six-case live planner evaluation against a configured
-provider. This command makes real API calls and is not part of CI:
+Run the optional six-case live planner smoke evaluation against a configured
+provider. The command makes real API calls, saves a prompt-free JSON report to
+`target/evaluations/`, and is not part of CI:
 
 ```bash
 pnpm eval:planner deepseek
+```
+
+Pass `full` explicitly to run the 30-case suite:
+
+```bash
+pnpm eval:planner deepseek full
 ```
 
 Run all verification gates:

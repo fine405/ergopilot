@@ -592,11 +592,12 @@ Exit criterion: every success and failure in the demo has inspectable evidence.
 Current milestone: the Hono control plane exposes the latest 100 process-local
 attempts for schema-valid planning requests, with trace ID, provider/model,
 duration, outcome, task ID and stable error code. Prompts, user identifiers and
-credentials are excluded. A deterministic scorer and six-case seed dataset now
-cover exact English/Chinese intent extraction, safety boundaries and an unsafe
-request; the initial live DeepSeek run passed 6/6 cases. Persistent export,
-request-validation telemetry, expansion to 30–50 cases and tool-call scoring
-remain future slices.
+credentials are excluded. A deterministic scorer now provides a six-case smoke
+suite and an explicit 30-case dataset covering English/Chinese intent, unit and
+policy paraphrases, safety boundaries and prompt-injection attempts. Runs emit
+versioned, prompt-free JSON reports with per-case latency plus p50/p95; the
+initial live DeepSeek smoke run passed 6/6 cases. Request-validation telemetry,
+tool-call scoring and a measured 30-case baseline remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 

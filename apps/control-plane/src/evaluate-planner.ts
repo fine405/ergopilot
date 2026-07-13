@@ -4,7 +4,10 @@ import { plannerProviderIdSchema } from "@ergopilot/contracts";
 
 import {
   PLANNER_EVALUATION_CASES,
+  PLANNER_EVALUATION_SMOKE_CASES,
+  type PlannerEvaluationSuite,
   runPlannerEvaluation,
+  savePlannerEvaluationReport,
 } from "./planner-evaluation";
 import {
   createConfiguredTaskPlanners,
@@ -18,12 +21,16 @@ try {
 }
 
 async function main() {
-  const providerArgument = process.argv
-    .slice(2)
-    .find((value) => value !== "--");
+  const arguments_ = process.argv.slice(2).filter((value) => value !== "--");
+  const providerArgument = arguments_[0];
   const provider = plannerProviderIdSchema.parse(
     providerArgument ?? "deepseek",
   );
+  const suiteArgument = arguments_[1] ?? "smoke";
+  if (suiteArgument !== "smoke" && suiteArgument !== "full") {
+    throw new Error('Evaluation suite must be either "smoke" or "full"');
+  }
+  const suite: PlannerEvaluationSuite = suiteArgument;
   const planner = createConfiguredTaskPlanners()[provider];
   if (!planner) {
     throw new Error(
@@ -34,9 +41,17 @@ async function main() {
   const report = await runPlannerEvaluation(
     planner,
     provider,
-    PLANNER_EVALUATION_CASES,
+    suite === "full"
+      ? PLANNER_EVALUATION_CASES
+      : PLANNER_EVALUATION_SMOKE_CASES,
+  );
+  const reportPath = await savePlannerEvaluationReport(
+    report,
+    suite,
+    fileURLToPath(new URL("../../../target/evaluations", import.meta.url)),
   );
   console.log(JSON.stringify(report, null, 2));
+  console.log(`Saved report to ${reportPath}`);
   if (report.passedCases !== report.totalCases) process.exitCode = 1;
 }
 
