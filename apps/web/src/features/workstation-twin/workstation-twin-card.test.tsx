@@ -244,4 +244,22 @@ describe("WorkstationTwinCard", () => {
     act(() => vi.advanceTimersByTime(60_000));
     expect(screen.getByRole("status").textContent).toBe("44 min remaining");
   });
+
+  it("does not leave an enabled reminder without a start time frozen", () => {
+    render(
+      <WorkstationTwinCard
+        snapshot={{
+          ...snapshot,
+          reminderEnabled: true,
+          reminderIntervalMinutes: 45,
+          reminderStartedAtMs: 0,
+        }}
+        run={undefined}
+        isLoading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe("Movement due now");
+  });
 });

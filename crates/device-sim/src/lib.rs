@@ -120,6 +120,16 @@ impl SqliteSimulator {
     }
 
     fn read_snapshot(&self, observed_at_ms: u64) -> Result<WorkstationSnapshot, rusqlite::Error> {
+        if observed_at_ms > 0 {
+            self.connection.execute(
+                "UPDATE simulator_state
+                 SET reminder_started_at_ms = ?1
+                 WHERE singleton = 1
+                   AND reminder_enabled = 1
+                   AND reminder_started_at_ms = 0",
+                params![observed_at_ms],
+            )?;
+        }
         self.connection.query_row(
             "SELECT station_id, state_version, desk_height_mm,
                     lumbar_support_percent, seat_height_mm, seat_depth_mm,

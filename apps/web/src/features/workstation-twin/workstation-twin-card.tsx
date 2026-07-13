@@ -305,7 +305,7 @@ function SedentaryReminder({ snapshot }: { snapshot: WorkstationSnapshot }) {
 function sedentaryReminderValue(snapshot: WorkstationSnapshot, nowMs: number) {
   if (!snapshot.reminderEnabled) return "Paused";
   if (!snapshot.reminderStartedAtMs) {
-    return `${snapshot.reminderIntervalMinutes} min remaining`;
+    return "Movement due now";
   }
 
   const intervalMs = snapshot.reminderIntervalMinutes * 60_000;

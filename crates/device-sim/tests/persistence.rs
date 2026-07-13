@@ -92,6 +92,25 @@ fn existing_desk_state_is_migrated_with_default_lumbar_support() {
 }
 
 #[test]
+fn default_sedentary_reminder_starts_once_and_survives_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+
+    let mut first_process = SqliteSimulator::open(&database).unwrap();
+    let first = first_process.snapshot(1_000).unwrap();
+    let later = first_process.snapshot(1_500).unwrap();
+    drop(first_process);
+
+    let mut restarted = SqliteSimulator::open(&database).unwrap();
+    let after_restart = restarted.snapshot(2_000).unwrap();
+
+    assert!(first.reminder_enabled);
+    assert_eq!(first.reminder_started_at_ms, 1_000);
+    assert_eq!(later.reminder_started_at_ms, 1_000);
+    assert_eq!(after_restart.reminder_started_at_ms, 1_000);
+}
+
+#[test]
 fn complete_ergonomic_environment_survives_a_process_restart() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");

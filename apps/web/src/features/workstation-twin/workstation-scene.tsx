@@ -17,6 +17,12 @@ import { useRef } from "react";
 import { type Group, MathUtils } from "three";
 
 import { backrestResponseRate, backrestTargetAngle } from "./backrest-motion";
+import {
+  deskFrameGeometry,
+  lampLightState,
+  sceneHeight,
+  temperatureColor,
+} from "./workstation-scene-model";
 
 const camera = {
   position: [5.4, 3.6, 6.4] as [number, number, number],
@@ -212,7 +218,7 @@ function Desk({ configuration, previewConfiguration, uncertain }: DeskProps) {
 
   return (
     <group>
-      <DeskFrame />
+      <DeskFrame deskHeightMm={configuration.deskHeightMm} />
       <RigidBody
         ref={movingAssembly}
         type="kinematicPosition"
@@ -261,7 +267,25 @@ function Desk({ configuration, previewConfiguration, uncertain }: DeskProps) {
   );
 }
 
-function DeskFrame() {
+function DeskFrame({ deskHeightMm }: { deskHeightMm: number }) {
+  const innerColumns = useRef<Group>(null);
+  const renderedHeight = useRef(sceneHeight(deskHeightMm));
+  const initialGeometry = useRef(deskFrameGeometry(deskHeightMm)).current;
+
+  useFrame((_, delta) => {
+    renderedHeight.current = MathUtils.damp(
+      renderedHeight.current,
+      sceneHeight(deskHeightMm),
+      4.5,
+      delta,
+    );
+    const geometry = deskFrameGeometry(renderedHeight.current * 500);
+    if (innerColumns.current) {
+      innerColumns.current.position.y = geometry.innerColumnCenterY;
+      innerColumns.current.scale.y = geometry.innerColumnHeight;
+    }
+  });
+
   return (
     <group>
       {[-1.18, 1.18].map((x) => (
@@ -279,24 +303,37 @@ function DeskFrame() {
               roughness={0.35}
             />
           </RoundedBox>
-          <mesh castShadow position={[0, 0.71, 0]}>
-            <boxGeometry args={[0.25, 1.28, 0.25]} />
+          <mesh
+            castShadow
+            position={[0, initialGeometry.outerColumnCenterY, 0]}
+          >
+            <boxGeometry
+              args={[0.25, initialGeometry.outerColumnHeight, 0.25]}
+            />
             <meshStandardMaterial
               color="#38433f"
               metalness={0.66}
               roughness={0.32}
             />
           </mesh>
-          <mesh castShadow position={[0, 1.18, 0]}>
-            <boxGeometry args={[0.16, 1.4, 0.16]} />
+        </group>
+      ))}
+      <group
+        ref={innerColumns}
+        position={[0, initialGeometry.innerColumnCenterY, 0]}
+        scale={[1, initialGeometry.innerColumnHeight, 1]}
+      >
+        {[-1.18, 1.18].map((x) => (
+          <mesh key={x} castShadow position={[x, 0, 0]}>
+            <boxGeometry args={[0.16, 1, 0.16]} />
             <meshStandardMaterial
               color="#5a6662"
               metalness={0.72}
               roughness={0.28}
             />
           </mesh>
-        </group>
-      ))}
+        ))}
+      </group>
     </group>
   );
 }
@@ -364,6 +401,7 @@ function TaskLamp({
   brightnessPercent: number;
   color: string;
 }) {
+  const lightState = lampLightState(brightnessPercent);
   return (
     <group position={[1.18, 0.08, -0.42]}>
       <mesh castShadow>
@@ -381,7 +419,7 @@ function TaskLamp({
       <pointLight
         color={color}
         distance={4.2}
-        intensity={0.15 + (brightnessPercent / 100) * 3.2}
+        intensity={lightState.lightIntensity}
         position={[0.22, 0.68, 0.05]}
         castShadow
       />
@@ -390,7 +428,7 @@ function TaskLamp({
         <meshStandardMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={2}
+          emissiveIntensity={lightState.emissiveIntensity}
         />
       </mesh>
     </group>
@@ -692,14 +730,4 @@ function ChairSurface({
       wireframe={preview}
     />
   );
-}
-
-function sceneHeight(heightMm: number) {
-  return heightMm / 500;
-}
-
-function temperatureColor(temperatureK: number) {
-  if (temperatureK <= 3_300) return "#ffd2a3";
-  if (temperatureK >= 5_000) return "#dcecff";
-  return "#fff0d3";
 }
