@@ -242,6 +242,12 @@ export const taskEventSchema = z
   })
   .strict();
 
+const suspensionReasonSchema = z.enum([
+  "device_unavailable",
+  "stale_state",
+  "expired",
+]);
+
 export const taskRunViewSchema = z
   .object({
     runId: z.string(),
@@ -256,13 +262,23 @@ export const taskRunViewSchema = z
       "denied",
       "suspended",
     ]),
+    suspensionReason: suspensionReasonSchema.nullable(),
     approval: approvalViewSchema.nullable(),
     command: commandViewSchema.nullable(),
     commandEvents: z.array(commandEventSchema),
     events: z.array(taskEventSchema),
     policyDecision: policyDecisionSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((run, context) => {
+    if (run.status !== "suspended" && run.suspensionReason !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["suspensionReason"],
+        message: "suspensionReason must be null unless status is suspended",
+      });
+    }
+  });
 
 export const workstationSnapshotSchema = z
   .object({

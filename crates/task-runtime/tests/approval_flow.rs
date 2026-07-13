@@ -2,7 +2,9 @@ use device_sim::SqliteSimulator;
 use ergopilot_protocol::{CommandStatus, DeviceAction, PolicyOutcome, SCHEMA_VERSION};
 use policy_core::PolicyAuthority;
 use station_core::DeviceAdapter;
-use task_runtime::{ApprovalStatus, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
+use task_runtime::{
+    ApprovalStatus, SuspensionReason, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec,
+};
 
 #[test]
 fn desk_motion_waits_for_approval_without_moving_the_device() {
@@ -252,6 +254,10 @@ fn state_change_while_waiting_for_approval_suspends_the_old_plan() {
     let suspended = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
 
     assert_eq!(suspended.status, TaskRunStatus::Suspended);
+    assert_eq!(
+        suspended.suspension_reason,
+        Some(SuspensionReason::StaleState)
+    );
     assert_eq!(
         suspended.events.last().unwrap().event_type.as_str(),
         "run_suspended"

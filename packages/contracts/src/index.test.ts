@@ -284,7 +284,7 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
-  it("parses the approval state returned by the Rust runtime", () => {
+  it("keeps suspension reasons exclusive to suspended runs", () => {
     const run = taskRunViewSchema.parse({
       runId: "run-task-web-1",
       taskId: "task-web-1",
@@ -306,6 +306,7 @@ describe("TaskRunView contract", () => {
         ],
       },
       status: "awaiting_approval",
+      suspensionReason: null,
       approval: {
         approvalId: "approval-run-task-web-1",
         expiresAtMs: 61_000,
@@ -327,5 +328,13 @@ describe("TaskRunView contract", () => {
     });
 
     expect(run.approval?.status).toBe("pending");
+    expect(run.suspensionReason).toBeNull();
+    expect(
+      taskRunViewSchema.safeParse({
+        ...run,
+        status: "completed",
+        suspensionReason: "expired",
+      }).success,
+    ).toBe(false);
   });
 });

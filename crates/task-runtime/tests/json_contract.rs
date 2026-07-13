@@ -71,6 +71,7 @@ fn task_run_view_is_ready_for_a_typescript_timeline_consumer() {
     let awaiting_json = serde_json::to_value(awaiting).unwrap();
 
     assert_eq!(awaiting_json["status"], "awaiting_approval");
+    assert_eq!(awaiting_json["suspensionReason"], serde_json::Value::Null);
     assert_eq!(awaiting_json["task"]["goal"], "prepare_focus_session");
     assert_eq!(awaiting_json["task"]["steps"][0]["stepId"], "desk-1");
     assert_eq!(
@@ -117,6 +118,7 @@ fn task_runtime_reads_and_upgrades_the_previous_stored_run_shape() {
     let view = legacy["view"].as_object_mut().unwrap();
     let legacy_spec = view.remove("task").unwrap();
     view.remove("commandEvents");
+    view.remove("suspensionReason");
     legacy
         .as_object_mut()
         .unwrap()
@@ -133,6 +135,7 @@ fn task_runtime_reads_and_upgrades_the_previous_stored_run_shape() {
     let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
     let inspected = restarted.inspect("run-task-legacy-json").unwrap();
     assert_eq!(inspected.task, spec);
+    assert_eq!(inspected.suspension_reason, None);
     let completed = restarted
         .approve("run-task-legacy-json", "user-1", 1_100)
         .unwrap();

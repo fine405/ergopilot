@@ -27,6 +27,7 @@ const awaitingRun: TaskRunView = {
     ],
   },
   status: "awaiting_approval",
+  suspensionReason: null,
   approval: {
     approvalId: "approval-run-web-ack-loss",
     expiresAtMs: 61_000,
@@ -50,6 +51,7 @@ const awaitingRun: TaskRunView = {
 const suspendedRun: TaskRunView = {
   ...awaitingRun,
   status: "suspended",
+  suspensionReason: "device_unavailable",
   approval: {
     approvalId: "approval-run-web-ack-loss",
     expiresAtMs: 61_000,
@@ -62,6 +64,21 @@ const suspendedRun: TaskRunView = {
     { sequence: 3, eventType: "approval_granted", atMs: 2_000 },
     { sequence: 4, eventType: "run_suspended", atMs: 2_000 },
   ],
+};
+
+const staleRun: TaskRunView = {
+  ...suspendedRun,
+  suspensionReason: "stale_state",
+};
+
+const expiredRun: TaskRunView = {
+  ...suspendedRun,
+  suspensionReason: "expired",
+};
+
+const unclassifiedSuspendedRun: TaskRunView = {
+  ...suspendedRun,
+  suspensionReason: null,
 };
 
 afterEach(cleanup);
@@ -171,5 +188,65 @@ describe("RunOverview", () => {
 
     expect(onReconcile).toHaveBeenCalledWith(suspendedRun);
     expect(screen.getByText("Run suspended safely")).toBeTruthy();
+  });
+
+  it("requires a fresh run when station state changed", () => {
+    render(
+      <RunOverview
+        run={staleRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Resume run" })).toBeNull();
+    expect(screen.getByText("Station state changed")).toBeTruthy();
+    expect(screen.getByText(/Create a fresh task run/)).toBeTruthy();
+  });
+
+  it("requires a fresh run when the persisted intent expired", () => {
+    render(
+      <RunOverview
+        run={expiredRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Resume run" })).toBeNull();
+    expect(screen.getByText("Persisted intent expired")).toBeTruthy();
+    expect(screen.getByText(/Create a fresh task run/)).toBeTruthy();
+  });
+
+  it("requires a fresh run when a legacy suspension has no reason", () => {
+    render(
+      <RunOverview
+        run={unclassifiedSuspendedRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Resume run" })).toBeNull();
+    expect(screen.getByText("Suspension reason unavailable")).toBeTruthy();
+    expect(screen.getByText(/Create a fresh task run/)).toBeTruthy();
   });
 });

@@ -3,7 +3,7 @@ use ergopilot_protocol::{DeviceAction, WorkstationSnapshot};
 use policy_core::PolicyAuthority;
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use task_runtime::{TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
+use task_runtime::{SuspensionReason, TaskRunStatus, TaskRuntime, TaskRuntimeError, TaskSpec};
 
 struct CrashBeforeStationJournal {
     simulator: SqliteSimulator,
@@ -162,6 +162,10 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
         .unwrap();
 
     assert_eq!(suspended.status, TaskRunStatus::Suspended);
+    assert_eq!(
+        suspended.suspension_reason,
+        Some(SuspensionReason::DeviceUnavailable)
+    );
     assert!(suspended.command.is_none());
     assert!(suspended.command_events.is_empty());
     assert_eq!(
@@ -180,6 +184,7 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
         .unwrap();
 
     assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(completed.suspension_reason, None);
     assert_eq!(
         completed.events.last().unwrap().event_type.as_str(),
         "run_reconciled"
@@ -251,6 +256,55 @@ fn restart_dispatches_a_persisted_intent_if_the_station_journal_is_still_empty()
 }
 
 #[test]
+fn reconcile_suspends_a_persisted_intent_after_station_state_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let crashing_device = CrashBeforeStationJournal {
+        simulator,
+        snapshot_calls: 0,
+    };
+    let authority = policy_authority();
+    let mut first_process =
+        TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-recovery-stale-intent", "user-1", 780),
+            1_000,
+        )
+        .unwrap();
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        first_process
+            .approve(&awaiting.run_id, "user-1", 1_100)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(first_process);
+
+    let mut manual_control = SqliteSimulator::open(&database).unwrap();
+    let before_manual_change = manual_control.snapshot(1_150).unwrap();
+    manual_control
+        .apply(
+            &DeviceAction::DeskMoveToHeight { height_mm: 740 },
+            before_manual_change.state_version,
+        )
+        .unwrap();
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let recovered = restarted.reconcile(&awaiting.run_id, 1_200).unwrap();
+
+    assert_eq!(recovered.status, TaskRunStatus::Suspended);
+    assert_eq!(
+        recovered.suspension_reason,
+        Some(SuspensionReason::StaleState)
+    );
+    let final_state = restarted.station_snapshot(1_201).unwrap();
+    assert_eq!(final_state.desk_height_mm, 740);
+    assert_eq!(final_state.movement_count, 1);
+}
+
+#[test]
 fn resumed_device_failure_is_persisted_on_the_task_during_the_same_reconciliation() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");
@@ -316,6 +370,7 @@ fn expired_pre_dispatch_intent_suspends_without_moving_after_restart() {
     let recovered = restarted.reconcile(&awaiting.run_id, 70_000).unwrap();
 
     assert_eq!(recovered.status, TaskRunStatus::Suspended);
+    assert_eq!(recovered.suspension_reason, Some(SuspensionReason::Expired));
     assert_eq!(
         restarted.station_snapshot(70_001).unwrap().movement_count,
         0

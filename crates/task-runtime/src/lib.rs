@@ -87,6 +87,14 @@ pub enum TaskRunStatus {
     Suspended,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuspensionReason {
+    DeviceUnavailable,
+    StaleState,
+    Expired,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
@@ -154,6 +162,8 @@ pub struct TaskRunView {
     pub task_id: String,
     pub task: TaskSpec,
     pub status: TaskRunStatus,
+    #[serde(default)]
+    pub suspension_reason: Option<SuspensionReason>,
     pub approval: Option<ApprovalView>,
     pub command: Option<CommandView>,
     #[serde(default)]
@@ -276,6 +286,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             task_id: spec.task_id.clone(),
             task: spec,
             status,
+            suspension_reason: None,
             approval,
             command: None,
             command_events: Vec::new(),
@@ -392,6 +403,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             Ok(command_view) => command_view,
             Err(RuntimeError::StaleState { .. }) => {
                 stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(SuspensionReason::StaleState);
                 append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                 self.save_run(&stored, now_ms)?;
                 return Ok(stored.view);
@@ -407,6 +419,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     command_view
                 } else if unavailable {
                     stored.view.status = TaskRunStatus::Suspended;
+                    stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
                     append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                     self.save_run(&stored, now_ms)?;
                     return Ok(stored.view);
@@ -427,6 +440,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
         };
         stored.view.status = status;
+        stored.view.suspension_reason = None;
         stored.view.command = Some(command_view);
         self.refresh_command_events(&mut stored)?;
         append_event(&mut stored.view, event_type, now_ms);
@@ -469,12 +483,19 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         let mut device_error = None;
         let command_view = match self.station.resume_command(command.clone(), &grant, now_ms) {
             Ok(command_view) => command_view,
+            Err(RuntimeError::StaleState { .. }) => {
+                stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(SuspensionReason::StaleState);
+                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                self.save_run(&stored, now_ms)?;
+                return Ok(stored.view);
+            }
             Err(
-                RuntimeError::StaleState { .. }
-                | RuntimeError::ExpiredCommand { .. }
+                RuntimeError::ExpiredCommand { .. }
                 | RuntimeError::Policy(PolicyError::Expired { .. }),
             ) => {
                 stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(SuspensionReason::Expired);
                 append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                 self.save_run(&stored, now_ms)?;
                 return Ok(stored.view);
@@ -490,6 +511,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     command_view
                 } else if unavailable {
                     stored.view.status = TaskRunStatus::Suspended;
+                    stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
                     append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
                     self.save_run(&stored, now_ms)?;
                     return Ok(stored.view);
@@ -508,6 +530,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             }
         };
         stored.view.status = status;
+        stored.view.suspension_reason = None;
         stored.view.command = Some(command_view);
         self.refresh_command_events(&mut stored)?;
         append_event_once(&mut stored.view, event_type, now_ms);

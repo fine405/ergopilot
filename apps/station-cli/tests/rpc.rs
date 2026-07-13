@@ -241,6 +241,10 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
     );
 
     assert_eq!(suspended["result"]["status"], "suspended");
+    assert_eq!(
+        suspended["result"]["suspensionReason"],
+        "device_unavailable"
+    );
     assert_eq!(suspended["result"]["command"], serde_json::Value::Null);
     assert_eq!(suspended["result"]["commandEvents"], json!([]));
     let after_suspension = invoke(
@@ -261,6 +265,10 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
         },
     );
     assert_eq!(resumed["result"]["status"], "completed");
+    assert_eq!(
+        resumed["result"]["suspensionReason"],
+        serde_json::Value::Null
+    );
 
     let final_snapshot = invoke(
         &database,

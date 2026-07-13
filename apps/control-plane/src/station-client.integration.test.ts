@@ -194,11 +194,13 @@ describe("ProcessStationClient", () => {
     const finalSnapshot = await client.stationSnapshot(1_250);
 
     expect(suspended.status).toBe("suspended");
+    expect(suspended.suspensionReason).toBe("device_unavailable");
     expect(suspended.command).toBeNull();
     expect(suspended.commandEvents).toEqual([]);
     expect(afterSuspension.movementCount).toBe(0);
     expect(resumed.runId).toBe(awaiting.runId);
     expect(resumed.status).toBe("completed");
+    expect(resumed.suspensionReason).toBeNull();
     expect(finalSnapshot.deskHeightMm).toBe(805);
     expect(finalSnapshot.movementCount).toBe(1);
   });

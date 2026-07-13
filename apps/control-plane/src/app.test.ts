@@ -33,6 +33,7 @@ const awaitingRun: TaskRunView = {
     ],
   },
   status: "awaiting_approval",
+  suspensionReason: null,
   approval: {
     approvalId: "approval-run-task-api-1",
     expiresAtMs: 61_000,
@@ -688,7 +689,10 @@ describe("control-plane API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ status: "suspended" });
+    expect(await response.json()).toMatchObject({
+      status: "suspended",
+      suspensionReason: "device_unavailable",
+    });
     expect(
       station.demoApproveTaskWithDeviceUnavailableBeforeDispatch,
     ).toHaveBeenCalledWith("run-task-api-1", "user-1", 1_100);
@@ -723,6 +727,7 @@ function fakeStation(): StationClient {
     demoApproveTaskWithDeviceUnavailableBeforeDispatch: vi.fn(async () => ({
       ...awaitingRun,
       status: "suspended" as const,
+      suspensionReason: "device_unavailable" as const,
     })),
     reconcileTask: vi.fn(async () => awaitingRun),
     stationSnapshot: vi.fn(async () => snapshot),

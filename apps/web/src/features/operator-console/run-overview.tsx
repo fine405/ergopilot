@@ -96,7 +96,10 @@ export function RunOverview({
   const targetHeight = run.task.steps[0].action.input.heightMm;
   const approvalPending =
     run.status === "awaiting_approval" && run.approval?.status === "pending";
-  const canReconcile = ["outcome_unknown", "suspended"].includes(run.status);
+  const canReconcile =
+    run.status === "outcome_unknown" ||
+    (run.status === "suspended" &&
+      run.suspensionReason === "device_unavailable");
 
   return (
     <div className="space-y-6">
@@ -294,14 +297,50 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
     );
   }
   if (run.status === "suspended") {
+    if (run.suspensionReason === "stale_state") {
+      return (
+        <Alert className="border-status-warn/30 bg-status-warn/5">
+          <TriangleAlert className="text-status-warn" />
+          <AlertTitle>Station state changed</AlertTitle>
+          <AlertDescription>
+            The planned state version no longer matches the workstation. Create
+            a fresh task run against the current station state.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    if (run.suspensionReason === "expired") {
+      return (
+        <Alert className="border-status-warn/30 bg-status-warn/5">
+          <TriangleAlert className="text-status-warn" />
+          <AlertTitle>Persisted intent expired</AlertTitle>
+          <AlertDescription>
+            The saved command or policy grant can no longer authorize motion.
+            Create a fresh task run to request a new approval.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    if (run.suspensionReason === "device_unavailable") {
+      return (
+        <Alert className="border-status-warn/30 bg-status-warn/5">
+          <TriangleAlert className="text-status-warn" />
+          <AlertTitle>Run suspended safely</AlertTitle>
+          <AlertDescription>
+            The runtime stopped before recording a terminal device outcome.
+            Resume re-checks connectivity, approval, and station state; invalid
+            preconditions remain suspended.
+          </AlertDescription>
+        </Alert>
+      );
+    }
     return (
       <Alert className="border-status-warn/30 bg-status-warn/5">
         <TriangleAlert className="text-status-warn" />
-        <AlertTitle>Run suspended safely</AlertTitle>
+        <AlertTitle>Suspension reason unavailable</AlertTitle>
         <AlertDescription>
-          The runtime stopped before recording a terminal device outcome. Resume
-          re-checks connectivity, approval, and station state; invalid
-          preconditions remain suspended.
+          The runtime has no structured recovery reason for this run. Create a
+          fresh task run against current station state.
         </AlertDescription>
       </Alert>
     );

@@ -35,6 +35,8 @@ runnable end to end. The current slice implements:
   fresh run instead of a blind retry;
 - a structured pre-dispatch device-unavailable path that suspends safely and
   resumes the same run only after an explicit operator action;
+- persisted suspension reasons that distinguish recoverable device
+  unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
 - an optional Mastra planner that converts natural language into a bounded,
@@ -87,9 +89,11 @@ normal approval to complete one movement.
 
 To exercise recoverable pre-dispatch unavailability, choose **Approve +
 unavailable before dispatch (demo)**. The run becomes `suspended` before a
-station command is journaled, so the movement count remains zero. Click
-**Resume run** after connectivity is safe; the same run completes and the total
-movement count becomes one.
+station command is journaled, exposes `device_unavailable` as its suspension
+reason, and keeps the movement count at zero. Click **Resume run** after
+connectivity is safe; the same run completes, clears the reason, and the total
+movement count becomes one. Runs suspended for `stale_state` or `expired` do not
+offer resume in the operator console; create a fresh run against current state.
 
 The deterministic CLI demos remain available:
 
