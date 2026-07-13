@@ -155,7 +155,7 @@ function EvaluationEvidence({
               <Badge
                 variant={failedCases.length === 0 ? "default" : "destructive"}
               >
-                {failedCases.length === 0 ? "All gates passed" : "Regression"}
+                {failedCases.length === 0 ? "All cases passed" : "Regression"}
               </Badge>
             </CardAction>
           </CardHeader>

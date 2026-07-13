@@ -34,12 +34,7 @@ export function openFilePlannerEvaluationStore(
             const key = `${report.provider}:${report.suite}:${report.generatedAt}`;
             const existing = reports.get(key);
             if (existing) {
-              if (coreEvidence(existing) !== coreEvidence(report)) {
-                throw new Error(`conflicting evaluation evidence for ${key}`);
-              }
-              if (provenanceFields(report) > provenanceFields(existing)) {
-                reports.set(key, report);
-              }
+              reports.set(key, mergeDuplicateEvidence(existing, report, key));
             } else {
               reports.set(key, report);
             }
@@ -78,6 +73,32 @@ function coreEvidence(report: PlannerEvaluationReport) {
   return JSON.stringify(evidence);
 }
 
-function provenanceFields(report: PlannerEvaluationReport) {
-  return Number(report.model !== null) + Number(report.sourceCommit !== null);
+function mergeDuplicateEvidence(
+  existing: PlannerEvaluationReport,
+  incoming: PlannerEvaluationReport,
+  key: string,
+): PlannerEvaluationReport {
+  if (coreEvidence(existing) !== coreEvidence(incoming)) {
+    throw new Error(`conflicting evaluation evidence for ${key}`);
+  }
+  return {
+    ...existing,
+    model: mergeProvenance(existing.model, incoming.model, key),
+    sourceCommit: mergeProvenance(
+      existing.sourceCommit,
+      incoming.sourceCommit,
+      key,
+    ),
+  };
+}
+
+function mergeProvenance(
+  existing: string | null,
+  incoming: string | null,
+  key: string,
+) {
+  if (existing !== null && incoming !== null && existing !== incoming) {
+    throw new Error(`conflicting evaluation provenance for ${key}`);
+  }
+  return existing ?? incoming;
 }

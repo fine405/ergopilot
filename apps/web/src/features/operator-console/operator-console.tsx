@@ -5,6 +5,7 @@ import type {
 } from "@ergopilot/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHydrated } from "@tanstack/react-router";
+import { Radio } from "lucide-react";
 import { useEffect } from "react";
 
 import { WorkstationTwinCard } from "@/features/workstation-twin/workstation-twin-card";
@@ -225,6 +226,21 @@ export function OperatorConsole({
   return (
     <div className="min-h-svh bg-background">
       <main className="mx-auto grid max-w-[90rem] gap-6 px-5 py-6 lg:grid-cols-12 lg:px-8 lg:py-8">
+        <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground lg:col-span-12">
+          <Radio
+            className={
+              stationQuery.data
+                ? "size-3.5 text-status-ok"
+                : "size-3.5 text-muted-foreground"
+            }
+            aria-hidden="true"
+          />
+          {stationQuery.data
+            ? "Station connected"
+            : stationQuery.error
+              ? "Station unavailable"
+              : "Connecting to station"}
+        </div>
         <aside className="space-y-6 lg:col-span-4 xl:col-span-3">
           <AgentPlannerCard
             providers={plannerProvidersQuery.data?.providers}

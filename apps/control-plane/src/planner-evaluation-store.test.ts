@@ -55,6 +55,58 @@ describe("file planner evaluation store", () => {
       PlannerEvaluationStoreError,
     );
   });
+
+  it("merges complementary provenance for otherwise identical evidence", async () => {
+    const firstDirectory = await temporaryDirectory();
+    const secondDirectory = await temporaryDirectory();
+    const evidence = report("2026-07-13T02:00:00.000Z", "full");
+    await Promise.all([
+      writeReport(firstDirectory, "model.json", {
+        ...evidence,
+        model: "deepseek/deepseek-v4-flash",
+      }),
+      writeReport(secondDirectory, "commit.json", {
+        ...evidence,
+        sourceCommit: "67e43cd",
+      }),
+    ]);
+    const store = openFilePlannerEvaluationStore([
+      firstDirectory,
+      secondDirectory,
+    ]);
+
+    await expect(store.list()).resolves.toEqual([
+      {
+        ...evidence,
+        model: "deepseek/deepseek-v4-flash",
+        sourceCommit: "67e43cd",
+      },
+    ]);
+  });
+
+  it("fails closed when duplicate evidence has conflicting provenance", async () => {
+    const firstDirectory = await temporaryDirectory();
+    const secondDirectory = await temporaryDirectory();
+    const evidence = report("2026-07-13T02:00:00.000Z", "full");
+    await Promise.all([
+      writeReport(firstDirectory, "first.json", {
+        ...evidence,
+        model: "deepseek/deepseek-v4-flash",
+      }),
+      writeReport(secondDirectory, "second.json", {
+        ...evidence,
+        model: "deepseek/deepseek-v3.2",
+      }),
+    ]);
+    const store = openFilePlannerEvaluationStore([
+      firstDirectory,
+      secondDirectory,
+    ]);
+
+    await expect(store.list()).rejects.toBeInstanceOf(
+      PlannerEvaluationStoreError,
+    );
+  });
 });
 
 async function temporaryDirectory() {
@@ -63,11 +115,7 @@ async function temporaryDirectory() {
   return directory;
 }
 
-function writeReport(
-  directory: string,
-  fileName: string,
-  value: ReturnType<typeof report>,
-) {
+function writeReport(directory: string, fileName: string, value: unknown) {
   return writeFile(join(directory, fileName), JSON.stringify(value));
 }
 
