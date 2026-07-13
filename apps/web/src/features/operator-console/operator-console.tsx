@@ -54,6 +54,12 @@ export function OperatorConsole({
     enabled: hydrated,
     retry: false,
   });
+  const profilesQuery = useQuery({
+    queryKey: ["workstation-profiles"],
+    queryFn: () => controlPlane.listProfiles(),
+    enabled: hydrated,
+    retry: false,
+  });
 
   const planMutation = useMutation({
     mutationFn: (request: TaskPlanRequest) => controlPlane.planTask(request),
@@ -67,6 +73,15 @@ export function OperatorConsole({
       queryClient.setQueryData(["task-run", run.runId], run);
       await onRunIdChange(run.runId);
       await queryClient.invalidateQueries({ queryKey: ["station-snapshot"] });
+    },
+  });
+  const saveProfileMutation = useMutation({
+    mutationFn: (profile: Parameters<typeof controlPlane.saveProfile>[0]) =>
+      controlPlane.saveProfile(profile),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["workstation-profiles"],
+      });
     },
   });
   const approveMutation = useMutation({
@@ -185,6 +200,10 @@ export function OperatorConsole({
     errorMessage(approveWithDeviceUnavailableBeforeDispatchMutation.error) ??
     errorMessage(resumeMutation.error) ??
     errorMessage(reconcileMutation.error);
+  const configurationError =
+    errorMessage(startMutation.error) ??
+    errorMessage(saveProfileMutation.error) ??
+    errorMessage(profilesQuery.error);
   const isMutating =
     startMutation.isPending ||
     approveMutation.isPending ||
@@ -260,13 +279,6 @@ export function OperatorConsole({
             planningError={errorMessage(planMutation.error)}
             actionError={actionError}
           />
-          <TaskComposer
-            onSubmit={(task) =>
-              startMutation.mutateAsync(task).then(() => undefined)
-            }
-            isPending={startMutation.isPending}
-            error={errorMessage(startMutation.error)}
-          />
           <StationCard
             snapshot={stationQuery.data}
             isLoading={stationQuery.isLoading || stationQuery.isFetching}
@@ -283,6 +295,19 @@ export function OperatorConsole({
             run={runQuery.data}
             isLoading={stationQuery.isLoading || stationQuery.isFetching}
             error={errorMessage(stationQuery.error)}
+          />
+          <TaskComposer
+            snapshot={stationQuery.data}
+            profiles={profilesQuery.data?.profiles ?? []}
+            onSubmit={(task) =>
+              startMutation.mutateAsync(task).then(() => undefined)
+            }
+            onSaveProfile={(profile) =>
+              saveProfileMutation.mutateAsync(profile).then(() => undefined)
+            }
+            isPending={startMutation.isPending}
+            isSaving={saveProfileMutation.isPending}
+            error={configurationError}
           />
           <RunOverview
             run={runQuery.data}

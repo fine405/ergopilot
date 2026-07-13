@@ -16,6 +16,153 @@ export const safeLumbarSupportPercentSchema = z
   .int()
   .min(minimumLumbarSupportPercent)
   .max(maximumLumbarSupportPercent);
+export const minimumSeatHeightMm = 420 as const;
+export const maximumSeatHeightMm = 550 as const;
+export const defaultSeatHeightMm = 470 as const;
+export const minimumSeatDepthMm = 380 as const;
+export const maximumSeatDepthMm = 520 as const;
+export const defaultSeatDepthMm = 450 as const;
+export const minimumArmrestHeightMm = 180 as const;
+export const maximumArmrestHeightMm = 310 as const;
+export const defaultArmrestHeightMm = 240 as const;
+export const minimumArmrestDepthMm = -60 as const;
+export const maximumArmrestDepthMm = 60 as const;
+export const defaultArmrestDepthMm = 0 as const;
+export const minimumArmrestWidthMm = 420 as const;
+export const maximumArmrestWidthMm = 560 as const;
+export const defaultArmrestWidthMm = 480 as const;
+export const minimumArmrestAngleDeg = -30 as const;
+export const maximumArmrestAngleDeg = 30 as const;
+export const defaultArmrestAngleDeg = 0 as const;
+export const minimumReclineAngleDeg = 110 as const;
+export const maximumReclineAngleDeg = 135 as const;
+export const defaultReclineAngleDeg = 110 as const;
+export const defaultReclineResistancePercent = 55 as const;
+export const minimumHeadrestHeightMm = 0 as const;
+export const maximumHeadrestHeightMm = 120 as const;
+export const defaultHeadrestHeightMm = 50 as const;
+export const minimumHeadrestAngleDeg = -30 as const;
+export const maximumHeadrestAngleDeg = 30 as const;
+export const defaultHeadrestAngleDeg = 0 as const;
+export const minimumLightColorTemperatureK = 2_700 as const;
+export const maximumLightColorTemperatureK = 6_500 as const;
+export const defaultLightBrightnessPercent = 70 as const;
+export const defaultLightColorTemperatureK = 4_300 as const;
+export const minimumReminderIntervalMinutes = 20 as const;
+export const maximumReminderIntervalMinutes = 180 as const;
+export const defaultReminderIntervalMinutes = 45 as const;
+
+const boundedInteger = (minimum: number, maximum: number) =>
+  z.number().int().min(minimum).max(maximum);
+
+export const chairErgonomicsSchema = z
+  .object({
+    seatHeightMm: boundedInteger(minimumSeatHeightMm, maximumSeatHeightMm),
+    seatDepthMm: boundedInteger(minimumSeatDepthMm, maximumSeatDepthMm),
+    lumbarSupportPercent: safeLumbarSupportPercentSchema,
+    armrestHeightMm: boundedInteger(
+      minimumArmrestHeightMm,
+      maximumArmrestHeightMm,
+    ),
+    armrestDepthMm: boundedInteger(
+      minimumArmrestDepthMm,
+      maximumArmrestDepthMm,
+    ),
+    armrestWidthMm: boundedInteger(
+      minimumArmrestWidthMm,
+      maximumArmrestWidthMm,
+    ),
+    armrestAngleDeg: boundedInteger(
+      minimumArmrestAngleDeg,
+      maximumArmrestAngleDeg,
+    ),
+    reclineAngleDeg: boundedInteger(
+      minimumReclineAngleDeg,
+      maximumReclineAngleDeg,
+    ),
+    reclineResistancePercent: boundedInteger(0, 100),
+    reclineLocked: z.boolean(),
+    headrestHeightMm: boundedInteger(
+      minimumHeadrestHeightMm,
+      maximumHeadrestHeightMm,
+    ),
+    headrestAngleDeg: boundedInteger(
+      minimumHeadrestAngleDeg,
+      maximumHeadrestAngleDeg,
+    ),
+  })
+  .strict();
+
+export const lightConfigurationSchema = z
+  .object({
+    brightnessPercent: boundedInteger(0, 100),
+    colorTemperatureK: boundedInteger(
+      minimumLightColorTemperatureK,
+      maximumLightColorTemperatureK,
+    ),
+  })
+  .strict();
+
+export const reminderConfigurationSchema = z
+  .object({
+    enabled: z.boolean(),
+    intervalMinutes: boundedInteger(
+      minimumReminderIntervalMinutes,
+      maximumReminderIntervalMinutes,
+    ),
+  })
+  .strict();
+
+export const workstationConfigurationSchema = z
+  .object({
+    deskHeightMm: safeDeskHeightMmSchema,
+    chair: chairErgonomicsSchema,
+    light: lightConfigurationSchema,
+    reminder: reminderConfigurationSchema,
+  })
+  .strict();
+
+export const defaultChairErgonomics = chairErgonomicsSchema.parse({
+  seatHeightMm: defaultSeatHeightMm,
+  seatDepthMm: defaultSeatDepthMm,
+  lumbarSupportPercent: defaultLumbarSupportPercent,
+  armrestHeightMm: defaultArmrestHeightMm,
+  armrestDepthMm: defaultArmrestDepthMm,
+  armrestWidthMm: defaultArmrestWidthMm,
+  armrestAngleDeg: defaultArmrestAngleDeg,
+  reclineAngleDeg: defaultReclineAngleDeg,
+  reclineResistancePercent: defaultReclineResistancePercent,
+  reclineLocked: true,
+  headrestHeightMm: defaultHeadrestHeightMm,
+  headrestAngleDeg: defaultHeadrestAngleDeg,
+});
+
+export const defaultLightConfiguration = lightConfigurationSchema.parse({
+  brightnessPercent: defaultLightBrightnessPercent,
+  colorTemperatureK: defaultLightColorTemperatureK,
+});
+
+export const defaultReminderConfiguration = reminderConfigurationSchema.parse({
+  enabled: true,
+  intervalMinutes: defaultReminderIntervalMinutes,
+});
+
+export const defaultWorkstationConfiguration =
+  workstationConfigurationSchema.parse({
+    deskHeightMm: 720,
+    chair: defaultChairErgonomics,
+    light: defaultLightConfiguration,
+    reminder: defaultReminderConfiguration,
+  });
+
+export const defaultWorkstationSnapshotFields = {
+  ...defaultChairErgonomics,
+  lightBrightnessPercent: defaultLightBrightnessPercent,
+  lightColorTemperatureK: defaultLightColorTemperatureK,
+  reminderEnabled: true,
+  reminderIntervalMinutes: defaultReminderIntervalMinutes,
+  reminderStartedAtMs: 0,
+};
 
 const identifierSchema = z
   .string()
@@ -26,20 +173,23 @@ const identifierSchema = z
 const actorIdSchema = z.string().trim().min(1).max(128);
 const assumptionSchema = z.string().trim().min(1).max(256);
 
-const numericCapabilityInputSchema = z
+const capabilityInputSchema = z
   .object({
     type: z.literal("object"),
     additionalProperties: z.literal(false),
     required: z.array(identifierSchema).min(1),
     properties: z.record(
       identifierSchema,
-      z
-        .object({
-          type: z.literal("integer"),
-          minimum: z.number().int(),
-          maximum: z.number().int(),
-        })
-        .strict(),
+      z.union([
+        z
+          .object({
+            type: z.literal("integer"),
+            minimum: z.number().int(),
+            maximum: z.number().int(),
+          })
+          .strict(),
+        z.object({ type: z.literal("boolean") }).strict(),
+      ]),
     ),
   })
   .strict();
@@ -51,7 +201,7 @@ export const capabilityDescriptorSchema = z
     title: z.string().trim().min(1).max(128),
     mode: z.enum(["read", "action"]),
     risk: z.enum(["read", "reversible", "motion", "restricted"]),
-    inputSchema: numericCapabilityInputSchema,
+    inputSchema: capabilityInputSchema,
     timeoutMs: z.number().int().positive(),
     cancelable: z.boolean(),
     freshnessMs: z.number().int().positive().optional(),
@@ -135,6 +285,157 @@ export const workstationCapabilityCatalog =
           observedField: "lumbarSupportPercent",
         },
       },
+      {
+        schemaVersion,
+        id: "chair.adjust_ergonomics",
+        title: "Adjust ergonomic chair",
+        mode: "action",
+        risk: "motion",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "seatHeightMm",
+            "seatDepthMm",
+            "lumbarSupportPercent",
+            "armrestHeightMm",
+            "armrestDepthMm",
+            "armrestWidthMm",
+            "armrestAngleDeg",
+            "reclineAngleDeg",
+            "reclineResistancePercent",
+            "reclineLocked",
+            "headrestHeightMm",
+            "headrestAngleDeg",
+          ],
+          properties: {
+            seatHeightMm: {
+              type: "integer",
+              minimum: minimumSeatHeightMm,
+              maximum: maximumSeatHeightMm,
+            },
+            seatDepthMm: {
+              type: "integer",
+              minimum: minimumSeatDepthMm,
+              maximum: maximumSeatDepthMm,
+            },
+            lumbarSupportPercent: {
+              type: "integer",
+              minimum: minimumLumbarSupportPercent,
+              maximum: maximumLumbarSupportPercent,
+            },
+            armrestHeightMm: {
+              type: "integer",
+              minimum: minimumArmrestHeightMm,
+              maximum: maximumArmrestHeightMm,
+            },
+            armrestDepthMm: {
+              type: "integer",
+              minimum: minimumArmrestDepthMm,
+              maximum: maximumArmrestDepthMm,
+            },
+            armrestWidthMm: {
+              type: "integer",
+              minimum: minimumArmrestWidthMm,
+              maximum: maximumArmrestWidthMm,
+            },
+            armrestAngleDeg: {
+              type: "integer",
+              minimum: minimumArmrestAngleDeg,
+              maximum: maximumArmrestAngleDeg,
+            },
+            reclineAngleDeg: {
+              type: "integer",
+              minimum: minimumReclineAngleDeg,
+              maximum: maximumReclineAngleDeg,
+            },
+            reclineResistancePercent: {
+              type: "integer",
+              minimum: 0,
+              maximum: 100,
+            },
+            reclineLocked: { type: "boolean" },
+            headrestHeightMm: {
+              type: "integer",
+              minimum: minimumHeadrestHeightMm,
+              maximum: maximumHeadrestHeightMm,
+            },
+            headrestAngleDeg: {
+              type: "integer",
+              minimum: minimumHeadrestAngleDeg,
+              maximum: maximumHeadrestAngleDeg,
+            },
+          },
+        },
+        timeoutMs: 3_000,
+        cancelable: false,
+        preconditions: ["station.online", "station.snapshot_fresh"],
+        approval: { required: true },
+        verification: {
+          strategy: "read_after_write",
+          observedField: "seatHeightMm",
+        },
+      },
+      {
+        schemaVersion,
+        id: "light.configure",
+        title: "Configure task light",
+        mode: "action",
+        risk: "reversible",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["brightnessPercent", "colorTemperatureK"],
+          properties: {
+            brightnessPercent: {
+              type: "integer",
+              minimum: 0,
+              maximum: 100,
+            },
+            colorTemperatureK: {
+              type: "integer",
+              minimum: minimumLightColorTemperatureK,
+              maximum: maximumLightColorTemperatureK,
+            },
+          },
+        },
+        timeoutMs: 2_000,
+        cancelable: false,
+        preconditions: ["station.online", "station.snapshot_fresh"],
+        approval: { required: true },
+        verification: {
+          strategy: "read_after_write",
+          observedField: "lightBrightnessPercent",
+        },
+      },
+      {
+        schemaVersion,
+        id: "reminder.configure",
+        title: "Configure sedentary reminder",
+        mode: "action",
+        risk: "reversible",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["enabled", "intervalMinutes"],
+          properties: {
+            enabled: { type: "boolean" },
+            intervalMinutes: {
+              type: "integer",
+              minimum: minimumReminderIntervalMinutes,
+              maximum: maximumReminderIntervalMinutes,
+            },
+          },
+        },
+        timeoutMs: 2_000,
+        cancelable: false,
+        preconditions: ["station.online", "station.snapshot_fresh"],
+        approval: { required: true },
+        verification: {
+          strategy: "read_after_write",
+          observedField: "reminderIntervalMinutes",
+        },
+      },
     ],
   });
 
@@ -159,12 +460,32 @@ export const deviceActionSchema = z.discriminatedUnion("type", [
         .strict(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("chair.adjust_ergonomics"),
+      input: chairErgonomicsSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("light.configure"),
+      input: lightConfigurationSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("reminder.configure"),
+      input: reminderConfigurationSchema,
+    })
+    .strict(),
 ]);
 
 export const taskGoalSchema = z.enum([
   "prepare_focus_session",
   "adjust_seated_support",
   "relieve_neck_discomfort",
+  "configure_lighting",
+  "configure_sedentary_reminder",
   "restore_profile",
 ]);
 
@@ -190,38 +511,80 @@ export const taskSpecSchema = z
     requestedBy: actorIdSchema,
     constraints: taskConstraintsSchema,
     assumptions: z.array(assumptionSchema).max(16),
-    steps: z.array(plannedStepSchema).min(1).max(2),
+    steps: z.array(plannedStepSchema).min(1).max(4),
   })
   .strict()
   .superRefine((task, context) => {
-    if (task.goal === "restore_profile" && task.steps.length !== 2) {
-      context.addIssue({
-        code: "custom",
-        path: ["steps"],
-        message: "restore_profile requires exactly two planned steps",
-      });
-    }
-    if (task.steps.length !== 2) return;
-    const [deskStep, chairStep] = task.steps;
     if (
-      task.goal !== "restore_profile" ||
-      deskStep?.action.type !== "desk.move_to_height" ||
-      chairStep?.action.type !== "chair.set_lumbar_support"
+      task.goal === "restore_profile" &&
+      task.steps.length !== 2 &&
+      task.steps.length !== 4
     ) {
       context.addIssue({
         code: "custom",
         path: ["steps"],
-        message: "restore_profile requires desk then lumbar steps",
+        message:
+          "restore_profile requires a legacy two-step or full four-step profile",
       });
     }
-    if (deskStep?.stepId === chairStep?.stepId) {
+    if (task.steps.length > 1 && task.goal !== "restore_profile") {
       context.addIssue({
         code: "custom",
-        path: ["steps", 1, "stepId"],
+        path: ["steps"],
+        message: "multi-step plans require restore_profile",
+      });
+    }
+    const expectedOrder =
+      task.steps.length === 2
+        ? ["desk.move_to_height", "chair.set_lumbar_support"]
+        : task.steps.length === 4
+          ? [
+              "desk.move_to_height",
+              "chair.adjust_ergonomics",
+              "light.configure",
+              "reminder.configure",
+            ]
+          : undefined;
+    if (
+      expectedOrder &&
+      task.steps.some(
+        (step, index) => step.action.type !== expectedOrder[index],
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
+        message: "restore_profile steps must follow the protected device order",
+      });
+    }
+    const stepIds = new Set(task.steps.map((step) => step.stepId));
+    if (stepIds.size !== task.steps.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["steps"],
         message: "stepId values must be unique",
       });
     }
   });
+
+export const workstationProfileSchema = z
+  .object({
+    schemaVersion: z.literal(schemaVersion),
+    id: identifierSchema,
+    name: z.string().trim().min(1).max(64),
+    configuration: workstationConfigurationSchema,
+    createdAtMs: z.number().int().nonnegative(),
+    updatedAtMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const saveWorkstationProfileRequestSchema = workstationProfileSchema
+  .pick({ id: true, name: true, configuration: true })
+  .strict();
+
+export const workstationProfilesResponseSchema = z
+  .object({ profiles: z.array(workstationProfileSchema).max(32) })
+  .strict();
 
 export const plannerProviderIdSchema = z.enum(["openai", "deepseek"]);
 
@@ -416,9 +779,37 @@ export const taskPlanDraftSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({
+      action: z.literal("chair.adjust_ergonomics"),
+      chair: chairErgonomicsSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("light.configure"),
+      light: lightConfigurationSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("reminder.configure"),
+      reminder: reminderConfigurationSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal("workstation.restore_profile"),
       targetHeightMm: safeDeskHeightMmSchema,
       lumbarSupportPercent: safeLumbarSupportPercentSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("workstation.apply_profile"),
+      configuration: workstationConfigurationSchema,
       ...taskPlanDraftFields,
     })
     .strict(),
@@ -455,13 +846,69 @@ export const approvalViewSchema = z
   })
   .strict();
 
+const ergonomicSnapshotFields = {
+  lumbarSupportPercent: safeLumbarSupportPercentSchema.default(
+    defaultLumbarSupportPercent,
+  ),
+  seatHeightMm: boundedInteger(
+    minimumSeatHeightMm,
+    maximumSeatHeightMm,
+  ).default(defaultSeatHeightMm),
+  seatDepthMm: boundedInteger(minimumSeatDepthMm, maximumSeatDepthMm).default(
+    defaultSeatDepthMm,
+  ),
+  armrestHeightMm: boundedInteger(
+    minimumArmrestHeightMm,
+    maximumArmrestHeightMm,
+  ).default(defaultArmrestHeightMm),
+  armrestDepthMm: boundedInteger(
+    minimumArmrestDepthMm,
+    maximumArmrestDepthMm,
+  ).default(defaultArmrestDepthMm),
+  armrestWidthMm: boundedInteger(
+    minimumArmrestWidthMm,
+    maximumArmrestWidthMm,
+  ).default(defaultArmrestWidthMm),
+  armrestAngleDeg: boundedInteger(
+    minimumArmrestAngleDeg,
+    maximumArmrestAngleDeg,
+  ).default(defaultArmrestAngleDeg),
+  reclineAngleDeg: boundedInteger(
+    minimumReclineAngleDeg,
+    maximumReclineAngleDeg,
+  ).default(defaultReclineAngleDeg),
+  reclineResistancePercent: boundedInteger(0, 100).default(
+    defaultReclineResistancePercent,
+  ),
+  reclineLocked: z.boolean().default(true),
+  headrestHeightMm: boundedInteger(
+    minimumHeadrestHeightMm,
+    maximumHeadrestHeightMm,
+  ).default(defaultHeadrestHeightMm),
+  headrestAngleDeg: boundedInteger(
+    minimumHeadrestAngleDeg,
+    maximumHeadrestAngleDeg,
+  ).default(defaultHeadrestAngleDeg),
+  lightBrightnessPercent: boundedInteger(0, 100).default(
+    defaultLightBrightnessPercent,
+  ),
+  lightColorTemperatureK: boundedInteger(
+    minimumLightColorTemperatureK,
+    maximumLightColorTemperatureK,
+  ).default(defaultLightColorTemperatureK),
+  reminderEnabled: z.boolean().default(true),
+  reminderIntervalMinutes: boundedInteger(
+    minimumReminderIntervalMinutes,
+    maximumReminderIntervalMinutes,
+  ).default(defaultReminderIntervalMinutes),
+  reminderStartedAtMs: z.number().int().nonnegative().default(0),
+};
+
 export const verifiedOutcomeSchema = z
   .object({
     stateVersion: z.number().int().nonnegative(),
     deskHeightMm: z.number().int().nonnegative(),
-    lumbarSupportPercent: safeLumbarSupportPercentSchema.default(
-      defaultLumbarSupportPercent,
-    ),
+    ...ergonomicSnapshotFields,
     verifiedAtMs: z.number().int().nonnegative(),
   })
   .strict();
@@ -571,8 +1018,8 @@ export const taskRunViewSchema = z
     command: commandViewSchema.nullable(),
     commandEvents: z.array(commandEventSchema),
     deskMotionProgress: z.array(deskMotionProgressSchema).max(101),
-    completedSteps: z.array(completedTaskStepSchema).max(2).optional(),
-    commandAttempts: z.array(completedTaskStepSchema).max(4).optional(),
+    completedSteps: z.array(completedTaskStepSchema).max(4).optional(),
+    commandAttempts: z.array(completedTaskStepSchema).max(8).optional(),
     events: z.array(taskEventSchema),
     policyDecision: policyDecisionSchema,
   })
@@ -717,9 +1164,7 @@ export const workstationSnapshotSchema = z
     stateVersion: z.number().int().nonnegative(),
     observedAtMs: z.number().int().nonnegative(),
     deskHeightMm: z.number().int().nonnegative(),
-    lumbarSupportPercent: safeLumbarSupportPercentSchema.default(
-      defaultLumbarSupportPercent,
-    ),
+    ...ergonomicSnapshotFields,
     movementCount: z.number().int().nonnegative(),
   })
   .strict();
@@ -744,6 +1189,19 @@ export const cancellationRequestSchema = z
   .strict();
 
 export type DeviceAction = z.infer<typeof deviceActionSchema>;
+export type ChairErgonomics = z.infer<typeof chairErgonomicsSchema>;
+export type LightConfiguration = z.infer<typeof lightConfigurationSchema>;
+export type ReminderConfiguration = z.infer<typeof reminderConfigurationSchema>;
+export type WorkstationConfiguration = z.infer<
+  typeof workstationConfigurationSchema
+>;
+export type WorkstationProfile = z.infer<typeof workstationProfileSchema>;
+export type SaveWorkstationProfileRequest = z.infer<
+  typeof saveWorkstationProfileRequestSchema
+>;
+export type WorkstationProfilesResponse = z.infer<
+  typeof workstationProfilesResponseSchema
+>;
 export type CapabilityDescriptor = z.infer<typeof capabilityDescriptorSchema>;
 export type CapabilityCatalogResponse = z.infer<
   typeof capabilityCatalogResponseSchema

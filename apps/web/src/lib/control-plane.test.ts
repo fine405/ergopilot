@@ -1,3 +1,4 @@
+import { defaultWorkstationSnapshotFields } from "@ergopilot/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HonoControlPlane, TauriControlPlane } from "./control-plane";
@@ -76,6 +77,7 @@ describe("HonoControlPlane", () => {
 describe("TauriControlPlane", () => {
   it("routes station reads through the closed desktop command", async () => {
     const snapshot = {
+      ...defaultWorkstationSnapshotFields,
       schemaVersion: 1 as const,
       stationId: "station-sim-1",
       stateVersion: 0,
@@ -132,6 +134,7 @@ describe("TauriControlPlane", () => {
   it("polls the durable desktop read model for live observations", async () => {
     const run = awaitingRun();
     const snapshot = {
+      ...defaultWorkstationSnapshotFields,
       schemaVersion: 1 as const,
       stationId: "station-sim-1",
       stateVersion: 0,

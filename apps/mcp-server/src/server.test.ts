@@ -1,4 +1,5 @@
 import {
+  defaultWorkstationSnapshotFields,
   type WorkstationSnapshot,
   workstationCapabilityCatalog,
 } from "@ergopilot/contracts";
@@ -152,6 +153,7 @@ describe("ErgoPilot MCP server", () => {
   it("reads station-owned device state", async () => {
     const controlPlane = fakeControlPlane();
     const snapshot: WorkstationSnapshot = {
+      ...defaultWorkstationSnapshotFields,
       schemaVersion: 1,
       stationId: "station-sim-1",
       stateVersion: 7,

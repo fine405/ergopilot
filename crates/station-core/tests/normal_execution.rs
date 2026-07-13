@@ -21,6 +21,7 @@ impl TestDevice {
                 desk_height_mm: 720,
                 lumbar_support_percent: 35,
                 movement_count: 0,
+                ..WorkstationSnapshot::default()
             },
             fail_before_effect: false,
         }
@@ -102,6 +103,28 @@ fn apply_action(snapshot: &mut WorkstationSnapshot, action: &DeviceAction) {
         }
         DeviceAction::ChairSetLumbarSupport { level_percent } => {
             snapshot.lumbar_support_percent = *level_percent;
+        }
+        DeviceAction::ChairAdjustErgonomics(configuration) => {
+            snapshot.seat_height_mm = configuration.seat_height_mm;
+            snapshot.seat_depth_mm = configuration.seat_depth_mm;
+            snapshot.lumbar_support_percent = configuration.lumbar_support_percent;
+            snapshot.armrest_height_mm = configuration.armrest_height_mm;
+            snapshot.armrest_depth_mm = configuration.armrest_depth_mm;
+            snapshot.armrest_width_mm = configuration.armrest_width_mm;
+            snapshot.armrest_angle_deg = configuration.armrest_angle_deg;
+            snapshot.recline_angle_deg = configuration.recline_angle_deg;
+            snapshot.recline_resistance_percent = configuration.recline_resistance_percent;
+            snapshot.recline_locked = configuration.recline_locked;
+            snapshot.headrest_height_mm = configuration.headrest_height_mm;
+            snapshot.headrest_angle_deg = configuration.headrest_angle_deg;
+        }
+        DeviceAction::LightConfigure(configuration) => {
+            snapshot.light_brightness_percent = configuration.brightness_percent;
+            snapshot.light_color_temperature_k = configuration.color_temperature_k;
+        }
+        DeviceAction::ReminderConfigure(configuration) => {
+            snapshot.reminder_enabled = configuration.enabled;
+            snapshot.reminder_interval_minutes = configuration.interval_minutes;
         }
     }
 }

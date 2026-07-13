@@ -1,5 +1,8 @@
 use device_sim::SqliteSimulator;
-use ergopilot_protocol::DeviceAction;
+use ergopilot_protocol::{
+    ChairErgonomics, DeviceAction, DeviceCommand, LightConfiguration, ReminderConfiguration,
+    SCHEMA_VERSION,
+};
 use rusqlite::Connection;
 use station_core::{DeviceAdapter, DeviceExecution};
 
@@ -82,5 +85,70 @@ fn existing_desk_state_is_migrated_with_default_lumbar_support() {
     assert_eq!(snapshot.state_version, 7);
     assert_eq!(snapshot.desk_height_mm, 810);
     assert_eq!(snapshot.lumbar_support_percent, 35);
+    assert_eq!(snapshot.seat_height_mm, 470);
+    assert_eq!(snapshot.light_color_temperature_k, 4_300);
+    assert!(snapshot.reminder_enabled);
     assert_eq!(snapshot.movement_count, 4);
+}
+
+#[test]
+fn complete_ergonomic_environment_survives_a_process_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    let mut version = simulator.snapshot(1_000).unwrap().state_version;
+    let actions = [
+        DeviceAction::ChairAdjustErgonomics(ChairErgonomics {
+            seat_height_mm: 490,
+            seat_depth_mm: 470,
+            lumbar_support_percent: 70,
+            armrest_height_mm: 260,
+            armrest_depth_mm: 20,
+            armrest_width_mm: 500,
+            armrest_angle_deg: -10,
+            recline_angle_deg: 125,
+            recline_resistance_percent: 40,
+            recline_locked: false,
+            headrest_height_mm: 80,
+            headrest_angle_deg: 12,
+        }),
+        DeviceAction::LightConfigure(LightConfiguration {
+            brightness_percent: 35,
+            color_temperature_k: 3_000,
+        }),
+        DeviceAction::ReminderConfigure(ReminderConfiguration {
+            enabled: true,
+            interval_minutes: 30,
+        }),
+    ];
+    for (index, action) in actions.into_iter().enumerate() {
+        let command = DeviceCommand {
+            schema_version: SCHEMA_VERSION,
+            command_id: format!("command-{index}"),
+            task_run_id: "run-profile".into(),
+            action,
+            expected_state_version: version,
+            idempotency_key: format!("run-profile:{index}"),
+            expires_at_ms: 10_000,
+            trace_id: "trace-profile".into(),
+            policy_grant_id: format!("grant-{index}"),
+        };
+        simulator
+            .apply_command(&command, 1_100 + index as u64)
+            .unwrap();
+        version += 1;
+    }
+    drop(simulator);
+
+    let mut restarted = SqliteSimulator::open(&database).unwrap();
+    let snapshot = restarted.snapshot(1_200).unwrap();
+
+    assert_eq!(snapshot.seat_height_mm, 490);
+    assert_eq!(snapshot.seat_depth_mm, 470);
+    assert_eq!(snapshot.recline_angle_deg, 125);
+    assert!(!snapshot.recline_locked);
+    assert_eq!(snapshot.light_brightness_percent, 35);
+    assert_eq!(snapshot.light_color_temperature_k, 3_000);
+    assert_eq!(snapshot.reminder_interval_minutes, 30);
+    assert_eq!(snapshot.reminder_started_at_ms, 1_102);
 }

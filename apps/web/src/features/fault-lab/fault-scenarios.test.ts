@@ -1,4 +1,9 @@
-import type { TaskRunView, WorkstationSnapshot } from "@ergopilot/contracts";
+import {
+  defaultWorkstationSnapshotFields,
+  type TaskRunView,
+  type WorkstationSnapshot,
+  workstationSnapshotSchema,
+} from "@ergopilot/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -261,7 +266,8 @@ function fakeControlPlane() {
 function snapshot(
   overrides: Partial<WorkstationSnapshot> = {},
 ): WorkstationSnapshot {
-  return {
+  return workstationSnapshotSchema.parse({
+    ...defaultWorkstationSnapshotFields,
     schemaVersion: 1,
     stationId: "station-sim-1",
     stateVersion: 1,
@@ -270,7 +276,7 @@ function snapshot(
     lumbarSupportPercent: 35,
     movementCount: 0,
     ...overrides,
-  };
+  });
 }
 
 function run(

@@ -1,7 +1,11 @@
-import type { TaskRunView, WorkstationSnapshot } from "@ergopilot/contracts";
+import type {
+  TaskRunView,
+  WorkstationConfiguration,
+  WorkstationSnapshot,
+} from "@ergopilot/contracts";
 import { useHydrated } from "@tanstack/react-router";
-import { Box, Eye, TriangleAlert } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { Box, Clock3, Eye, TriangleAlert } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { MotionProgress } from "@/features/workstation-motion/motion-progress";
+import { configurationFromSnapshot } from "@/features/workstation-profile/workstation-profile";
 
 const WorkstationScene = lazy(() =>
   import("./workstation-scene").then((module) => ({
@@ -37,6 +42,12 @@ export function WorkstationTwinCard({
   const hydrated = useHydrated();
   const previewHeightMm = pendingPreviewHeight(run);
   const previewLumbarSupportPercent = pendingPreviewLumbarSupport(run);
+  const configuration = snapshot
+    ? configurationFromSnapshot(snapshot)
+    : undefined;
+  const previewConfiguration = configuration
+    ? pendingPreviewConfiguration(run, configuration)
+    : undefined;
   const stateLabel = twinStateLabel(run);
   const latestProgress = run?.deskMotionProgress.at(-1);
 
@@ -54,8 +65,8 @@ export function WorkstationTwinCard({
             </Badge>
           </div>
           <CardDescription>
-            Rust telemetry drives the actuator; Rapier simulates gravity and
-            contact without becoming device truth.
+            Rust telemetry drives every actuator while Three.js and Rapier
+            render a realistic, inspectable workstation twin.
           </CardDescription>
         </div>
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40">
@@ -73,14 +84,12 @@ export function WorkstationTwinCard({
           </Alert>
         ) : snapshot ? (
           <div className="space-y-4">
-            <div className="relative h-[28rem] overflow-hidden rounded-xl border bg-[#0d1512]">
+            <div className="relative h-[32rem] overflow-hidden rounded-xl border bg-[#0d1512]">
               {hydrated ? (
                 <Suspense fallback={<SceneFallback />}>
                   <WorkstationScene
-                    confirmedHeightMm={snapshot.deskHeightMm}
-                    lumbarSupportPercent={snapshot.lumbarSupportPercent}
-                    previewHeightMm={previewHeightMm}
-                    previewLumbarSupportPercent={previewLumbarSupportPercent}
+                    configuration={configurationFromSnapshot(snapshot)}
+                    previewConfiguration={previewConfiguration}
                     uncertain={run?.status === "outcome_unknown"}
                   />
                 </Suspense>
@@ -102,7 +111,7 @@ export function WorkstationTwinCard({
             </div>
 
             <div className="space-y-3 rounded-lg border bg-muted/30 px-4 py-3">
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 <div className="rounded-lg border bg-card/50 px-3 py-2">
                   <p className="text-xs text-muted-foreground">
                     {run?.status === "executing"
@@ -121,6 +130,19 @@ export function WorkstationTwinCard({
                     {snapshot.lumbarSupportPercent}%
                   </p>
                 </div>
+                <TelemetryMetric
+                  label="Seat height / depth"
+                  value={`${snapshot.seatHeightMm} / ${snapshot.seatDepthMm} mm`}
+                />
+                <TelemetryMetric
+                  label="Backrest"
+                  value={`${snapshot.reclineAngleDeg}° · ${snapshot.reclineLocked ? "locked" : "free"} · ${snapshot.reclineResistancePercent}%`}
+                />
+                <TelemetryMetric
+                  label="Task light"
+                  value={`${snapshot.lightBrightnessPercent}% · ${snapshot.lightColorTemperatureK} K`}
+                />
+                <SedentaryReminder snapshot={snapshot} />
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -138,6 +160,14 @@ export function WorkstationTwinCard({
                       className="border-status-warn/40 bg-status-warn/10 text-status-warn"
                     >
                       Preview lumbar {previewLumbarSupportPercent}%
+                    </Badge>
+                  )}
+                  {previewConfiguration && run?.task.steps.length === 4 && (
+                    <Badge
+                      variant="outline"
+                      className="border-status-warn/40 bg-status-warn/10 text-status-warn"
+                    >
+                      Preview complete profile
                     </Badge>
                   )}
                   <Badge variant="secondary">{stateLabel}</Badge>
@@ -180,11 +210,102 @@ function pendingPreviewLumbarSupport(run: TaskRunView | undefined) {
     return undefined;
   }
   const action = run.task.steps.find(
-    (step) => step.action.type === "chair.set_lumbar_support",
+    (step) =>
+      step.action.type === "chair.set_lumbar_support" ||
+      step.action.type === "chair.adjust_ergonomics",
   )?.action;
-  return action?.type === "chair.set_lumbar_support"
-    ? action.input.levelPercent
+  if (action?.type === "chair.set_lumbar_support") {
+    return action.input.levelPercent;
+  }
+  return action?.type === "chair.adjust_ergonomics"
+    ? action.input.lumbarSupportPercent
     : undefined;
+}
+
+function pendingPreviewConfiguration(
+  run: TaskRunView | undefined,
+  current: WorkstationConfiguration,
+) {
+  if (
+    run?.status !== "awaiting_approval" ||
+    run.approval?.status !== "pending"
+  ) {
+    return undefined;
+  }
+  let changed = false;
+  let next: WorkstationConfiguration = {
+    ...current,
+    chair: { ...current.chair },
+    light: { ...current.light },
+    reminder: { ...current.reminder },
+  };
+  for (const step of run.task.steps) {
+    const { action } = step;
+    if (action.type === "desk.move_to_height") {
+      next = { ...next, deskHeightMm: action.input.heightMm };
+      changed = true;
+    } else if (action.type === "chair.set_lumbar_support") {
+      next = {
+        ...next,
+        chair: {
+          ...next.chair,
+          lumbarSupportPercent: action.input.levelPercent,
+        },
+      };
+      changed = true;
+    } else if (action.type === "chair.adjust_ergonomics") {
+      next = { ...next, chair: action.input };
+      changed = true;
+    } else if (action.type === "light.configure") {
+      next = { ...next, light: action.input };
+      changed = true;
+    } else if (action.type === "reminder.configure") {
+      next = { ...next, reminder: action.input };
+      changed = true;
+    }
+  }
+  return changed ? next : undefined;
+}
+
+function TelemetryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card/50 px-3 py-2">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-base font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function SedentaryReminder({ snapshot }: { snapshot: WorkstationSnapshot }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const elapsedMs = snapshot.reminderStartedAtMs
+    ? Math.max(0, nowMs - snapshot.reminderStartedAtMs)
+    : 0;
+  const remainingMs = Math.max(
+    0,
+    snapshot.reminderIntervalMinutes * 60_000 - elapsedMs,
+  );
+  const remainingMinutes = Math.ceil(remainingMs / 60_000);
+  const value = snapshot.reminderEnabled
+    ? remainingMinutes > 0
+      ? `${remainingMinutes} min remaining`
+      : "Movement due now"
+    : "Paused";
+
+  return (
+    <div className="rounded-lg border bg-card/50 px-3 py-2">
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Clock3 className="size-3.5" aria-hidden="true" />
+        Sedentary reminder
+      </p>
+      <p className="mt-1 font-mono text-base font-semibold">{value}</p>
+    </div>
+  );
 }
 
 function twinStateLabel(run: TaskRunView | undefined) {

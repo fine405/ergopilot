@@ -2,10 +2,15 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type SaveWorkstationProfileRequest,
   type TaskRunView,
   type TaskSpec,
   taskRunViewSchema,
+  type WorkstationProfile,
+  type WorkstationProfilesResponse,
   type WorkstationSnapshot,
+  workstationProfileSchema,
+  workstationProfilesResponseSchema,
   workstationSnapshotSchema,
 } from "@ergopilot/contracts";
 import { z } from "zod";
@@ -50,6 +55,11 @@ export interface StationClient {
   ): Promise<TaskRunView>;
   reconcileTask(runId: string, nowMs: number): Promise<TaskRunView>;
   stationSnapshot(observedAtMs: number): Promise<WorkstationSnapshot>;
+  listProfiles(): Promise<WorkstationProfilesResponse>;
+  saveProfile(
+    profile: SaveWorkstationProfileRequest,
+    nowMs: number,
+  ): Promise<WorkstationProfile>;
 }
 
 type RpcRequest =
@@ -84,7 +94,12 @@ type RpcRequest =
       params: { runId: string; resumedBy: string; nowMs: number };
     }
   | { method: "task.reconcile"; params: { runId: string; nowMs: number } }
-  | { method: "station.snapshot"; params: { observedAtMs: number } };
+  | { method: "station.snapshot"; params: { observedAtMs: number } }
+  | { method: "profile.list"; params: Record<string, never> }
+  | {
+      method: "profile.save";
+      params: { profile: SaveWorkstationProfileRequest; nowMs: number };
+    };
 
 const stationRpcErrorCodeSchema = z.enum([
   "invalid_request",
@@ -273,6 +288,23 @@ export class ProcessStationClient implements StationClient {
     return this.#invoke(
       { method: "station.snapshot", params: { observedAtMs } },
       workstationSnapshotSchema,
+    );
+  }
+
+  listProfiles(): Promise<WorkstationProfilesResponse> {
+    return this.#invoke(
+      { method: "profile.list", params: {} },
+      workstationProfilesResponseSchema,
+    );
+  }
+
+  saveProfile(
+    profile: SaveWorkstationProfileRequest,
+    nowMs: number,
+  ): Promise<WorkstationProfile> {
+    return this.#invoke(
+      { method: "profile.save", params: { profile, nowMs } },
+      workstationProfileSchema,
     );
   }
 

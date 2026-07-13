@@ -6,6 +6,7 @@ import type {
   TaskPlanResponse,
   TaskRunView,
 } from "@ergopilot/contracts";
+import { defaultWorkstationSnapshotFields } from "@ergopilot/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
@@ -22,6 +23,8 @@ import { OperatorConsole } from "./operator-console";
 const controlPlaneMock = vi.hoisted(() => ({
   plannerAttempts: vi.fn(),
   plannerProviders: vi.fn(),
+  listProfiles: vi.fn(),
+  saveProfile: vi.fn(),
   planTask: vi.fn(),
   startTask: vi.fn(),
   inspectTask: vi.fn(),
@@ -118,6 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   controlPlaneMock.plannerProviders.mockResolvedValue({ providers: [] });
   controlPlaneMock.stationSnapshot.mockResolvedValue({
+    ...defaultWorkstationSnapshotFields,
     schemaVersion: 1,
     stationId: "station-test",
     stateVersion: 1,
@@ -128,6 +132,7 @@ beforeEach(() => {
   });
   controlPlaneMock.planTask.mockResolvedValue(plannedTask);
   controlPlaneMock.plannerAttempts.mockResolvedValue({ attempts: [] });
+  controlPlaneMock.listProfiles.mockResolvedValue({ profiles: [] });
 });
 
 afterEach(cleanup);
@@ -229,6 +234,7 @@ describe("OperatorConsole", () => {
         ],
       },
       station: {
+        ...defaultWorkstationSnapshotFields,
         schemaVersion: 1,
         stationId: "station-test",
         stateVersion: 1,

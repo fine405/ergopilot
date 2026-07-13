@@ -35,6 +35,9 @@ fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGran
     let rule_id = match &command.action {
         DeviceAction::DeskMoveToHeight { .. } => "desk.motion.requires_approval",
         DeviceAction::ChairSetLumbarSupport { .. } => "chair.lumbar.requires_approval",
+        DeviceAction::ChairAdjustErgonomics(_) => "chair.motion.requires_approval",
+        DeviceAction::LightConfigure(_) => "light.configuration.requires_approval",
+        DeviceAction::ReminderConfigure(_) => "reminder.configuration.requires_approval",
     };
     authority
         .issue(GrantRequest {

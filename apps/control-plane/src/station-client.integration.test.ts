@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import type { TaskSpec } from "@ergopilot/contracts";
+import {
+  defaultWorkstationConfiguration,
+  type TaskSpec,
+} from "@ergopilot/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProcessStationClient } from "./station-client";
@@ -21,6 +24,35 @@ afterEach(async () => {
 });
 
 describe("ProcessStationClient", () => {
+  it("persists custom workstation profiles across process invocations", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "ergopilot-profile-memory-"),
+    );
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+
+    const saved = await client.saveProfile(
+      {
+        id: "profile-reading",
+        name: "Reading",
+        configuration: {
+          ...defaultWorkstationConfiguration,
+          light: { brightnessPercent: 55, colorTemperatureK: 3_600 },
+        },
+      },
+      1_000,
+    );
+    const listed = await client.listProfiles();
+
+    expect(saved.name).toBe("Reading");
+    expect(listed.profiles).toEqual([saved]);
+  });
+
   it("rejects simulator timing that can exceed the RPC deadline", () => {
     expect(
       () =>

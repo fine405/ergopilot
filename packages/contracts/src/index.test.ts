@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   capabilityCatalogResponseSchema,
+  chairErgonomicsSchema,
+  defaultChairErgonomics,
   plannerAttemptsResponseSchema,
   plannerEvaluationsResponseSchema,
   plannerProvidersResponseSchema,
@@ -65,9 +67,9 @@ describe("Device capability catalog", () => {
       workstationCapabilityCatalog,
     );
 
-    expect(catalog).toEqual({
-      schemaVersion: 1,
-      capabilities: [
+    expect(catalog.schemaVersion).toBe(1);
+    expect(catalog.capabilities).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           id: "desk.move_to_height",
           mode: "action",
@@ -110,12 +112,145 @@ describe("Device capability catalog", () => {
             observedField: "lumbarSupportPercent",
           },
         }),
-      ],
-    });
+        expect.objectContaining({
+          id: "chair.adjust_ergonomics",
+          risk: "motion",
+          approval: { required: true },
+          verification: {
+            strategy: "read_after_write",
+            observedField: "seatHeightMm",
+          },
+        }),
+        expect.objectContaining({
+          id: "light.configure",
+          risk: "reversible",
+          approval: { required: true },
+        }),
+        expect.objectContaining({
+          id: "reminder.configure",
+          risk: "reversible",
+          approval: { required: true },
+        }),
+      ]),
+    );
   });
 });
 
 describe("TaskSpec contract", () => {
+  it("keeps the ergonomic backrest inside the product-defined 110–135 degree range", () => {
+    expect(
+      chairErgonomicsSchema.safeParse({
+        ...defaultChairErgonomics,
+        reclineAngleDeg: 109,
+      }).success,
+    ).toBe(false);
+    expect(
+      chairErgonomicsSchema.safeParse({
+        ...defaultChairErgonomics,
+        reclineAngleDeg: 110,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts one ordered ergonomic workstation profile", () => {
+    const profile = taskSpecSchema.parse({
+      schemaVersion: 1,
+      taskId: "task-ergonomic-profile-1",
+      goal: "restore_profile",
+      requestedBy: "user-1",
+      constraints: { durationMinutes: 45, interruptionPolicy: "normal" },
+      assumptions: ["Desk movement area is clear"],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 760 },
+          },
+        },
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.adjust_ergonomics",
+            input: {
+              seatHeightMm: 470,
+              seatDepthMm: 450,
+              lumbarSupportPercent: 55,
+              armrestHeightMm: 240,
+              armrestDepthMm: 10,
+              armrestWidthMm: 480,
+              armrestAngleDeg: -5,
+              reclineAngleDeg: 110,
+              reclineResistancePercent: 60,
+              reclineLocked: true,
+              headrestHeightMm: 55,
+              headrestAngleDeg: 5,
+            },
+          },
+        },
+        {
+          stepId: "light-1",
+          action: {
+            type: "light.configure",
+            input: { brightnessPercent: 80, colorTemperatureK: 4800 },
+          },
+        },
+        {
+          stepId: "reminder-1",
+          action: {
+            type: "reminder.configure",
+            input: { enabled: true, intervalMinutes: 45 },
+          },
+        },
+      ],
+    });
+
+    expect(profile.steps.map((step) => step.action.type)).toEqual([
+      "desk.move_to_height",
+      "chair.adjust_ergonomics",
+      "light.configure",
+      "reminder.configure",
+    ]);
+    expect(
+      taskSpecSchema.safeParse({
+        ...profile,
+        steps: [profile.steps[1], profile.steps[0], ...profile.steps.slice(2)],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects ergonomic values outside the physical simulation envelope", () => {
+    const action = {
+      type: "chair.adjust_ergonomics",
+      input: {
+        seatHeightMm: 551,
+        seatDepthMm: 450,
+        lumbarSupportPercent: 55,
+        armrestHeightMm: 240,
+        armrestDepthMm: 0,
+        armrestWidthMm: 480,
+        armrestAngleDeg: 0,
+        reclineAngleDeg: 110,
+        reclineResistancePercent: 60,
+        reclineLocked: true,
+        headrestHeightMm: 55,
+        headrestAngleDeg: 0,
+      },
+    };
+
+    expect(
+      taskSpecSchema.safeParse({
+        schemaVersion: 1,
+        taskId: "task-unsafe-chair",
+        goal: "adjust_seated_support",
+        requestedBy: "user-1",
+        constraints: {},
+        assumptions: [],
+        steps: [{ stepId: "chair-1", action }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("matches the versioned planner-to-runtime payload", () => {
     const task = taskSpecSchema.parse({
       schemaVersion: 1,
@@ -219,16 +354,22 @@ describe("TaskSpec contract", () => {
   });
 
   it("upgrades schema-v1 station observations with default lumbar support", () => {
-    expect(
-      workstationSnapshotSchema.parse({
-        schemaVersion: 1,
-        stationId: "station-legacy-1",
-        stateVersion: 4,
-        observedAtMs: 1_000,
-        deskHeightMm: 720,
-        movementCount: 2,
-      }).lumbarSupportPercent,
-    ).toBe(35);
+    const snapshot = workstationSnapshotSchema.parse({
+      schemaVersion: 1,
+      stationId: "station-legacy-1",
+      stateVersion: 4,
+      observedAtMs: 1_000,
+      deskHeightMm: 720,
+      movementCount: 2,
+    });
+    expect(snapshot.lumbarSupportPercent).toBe(35);
+    expect(snapshot.seatHeightMm).toBe(470);
+    expect(snapshot.seatDepthMm).toBe(450);
+    expect(snapshot.reclineAngleDeg).toBe(110);
+    expect(snapshot.lightBrightnessPercent).toBe(70);
+    expect(snapshot.lightColorTemperatureK).toBe(4300);
+    expect(snapshot.reminderEnabled).toBe(true);
+    expect(snapshot.reminderIntervalMinutes).toBe(45);
     expect(
       verifiedOutcomeSchema.parse({
         stateVersion: 4,

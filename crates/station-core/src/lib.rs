@@ -124,6 +124,8 @@ pub enum RuntimeError {
     UnsafeDeskHeight { requested: u16, min: u16, max: u16 },
     #[error("lumbar support {requested}% is outside the safe envelope {min}..={max}%")]
     UnsafeLumbarSupport { requested: u8, min: u8, max: u8 },
+    #[error("{capability_id} contains values outside the safe device envelope")]
+    UnsafeActionConfiguration { capability_id: &'static str },
     #[error("command expired at {expires_at_ms}, current time is {now_ms}")]
     ExpiredCommand { expires_at_ms: u64, now_ms: u64 },
     #[error("action command is missing a policy grant")]
@@ -344,6 +346,27 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                     max: MAX_LUMBAR_SUPPORT_PERCENT,
                 });
             }
+            DeviceAction::ChairAdjustErgonomics(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                return Err(RuntimeError::UnsafeActionConfiguration {
+                    capability_id: command.action.capability_id(),
+                });
+            }
+            DeviceAction::LightConfigure(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                return Err(RuntimeError::UnsafeActionConfiguration {
+                    capability_id: command.action.capability_id(),
+                });
+            }
+            DeviceAction::ReminderConfigure(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                return Err(RuntimeError::UnsafeActionConfiguration {
+                    capability_id: command.action.capability_id(),
+                });
+            }
             _ => {}
         }
 
@@ -412,12 +435,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         } else {
             CommandStatus::Failed
         };
-        let outcome = verified.then_some(VerifiedOutcome {
-            state_version: observed.state_version,
-            desk_height_mm: observed.desk_height_mm,
-            lumbar_support_percent: observed.lumbar_support_percent,
-            verified_at_ms: now_ms,
-        });
+        let outcome = verified.then_some(VerifiedOutcome::from_snapshot(&observed, now_ms));
         let outcome_json = outcome.as_ref().map(serde_json::to_string).transpose()?;
         let status_text = if verified { "succeeded" } else { "failed" };
 
@@ -556,12 +574,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         let observed = self.device.snapshot(now_ms)?;
 
         if command.action.is_satisfied_by(&observed) {
-            let outcome = VerifiedOutcome {
-                state_version: observed.state_version,
-                desk_height_mm: observed.desk_height_mm,
-                lumbar_support_percent: observed.lumbar_support_percent,
-                verified_at_ms: now_ms,
-            };
+            let outcome = VerifiedOutcome::from_snapshot(&observed, now_ms);
             let outcome_json = serde_json::to_string(&outcome)?;
             self.transition_with_event(
                 &command_id,

@@ -1,7 +1,7 @@
 use ergopilot_protocol::{
     CommandEvent, CommandFailureReason, CommandStatus, CommandView, DeskMotionProgress,
-    DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant, PolicyOutcome, WorkstationSnapshot,
-    SCHEMA_VERSION,
+    DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant, PolicyOutcome,
+    SaveWorkstationProfileRequest, WorkstationProfile, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -18,6 +18,8 @@ pub enum TaskGoal {
     PrepareFocusSession,
     AdjustSeatedSupport,
     RelieveNeckDiscomfort,
+    ConfigureLighting,
+    ConfigureSedentaryReminder,
     RestoreProfile,
 }
 
@@ -273,6 +275,10 @@ pub enum TaskRuntimeError {
     UnsupportedTaskSchemaVersion { expected: u16, actual: u16 },
     #[error("invalid task specification: {reason}")]
     InvalidTaskSpec { reason: &'static str },
+    #[error("invalid workstation profile: {reason}")]
+    InvalidProfile { reason: &'static str },
+    #[error("the station already stores the maximum of {maximum} custom profiles")]
+    ProfileLimitReached { maximum: usize },
     #[error("approval belongs to {expected}, but was submitted by {actual}")]
     UnauthorizedApprover { expected: String, actual: String },
     #[error("task cancellation belongs to {expected}, but was submitted by {actual}")]
@@ -355,6 +361,13 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS workstation_profiles (
+                profile_id TEXT PRIMARY KEY,
+                stored_json TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL
+            );
             ",
         )?;
         let station = StationRuntime::open(path, device, policy_authority.verifier())?;
@@ -364,6 +377,90 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             station,
             policy_authority,
         })
+    }
+
+    pub fn save_profile(
+        &mut self,
+        request: SaveWorkstationProfileRequest,
+        now_ms: u64,
+    ) -> Result<WorkstationProfile, TaskRuntimeError> {
+        const MAXIMUM_PROFILES: usize = 32;
+        if !valid_profile_id(&request.id) {
+            return Err(TaskRuntimeError::InvalidProfile {
+                reason: "id must be a bounded identifier",
+            });
+        }
+        let name = request.name.trim();
+        if name.is_empty() || name.len() > 64 {
+            return Err(TaskRuntimeError::InvalidProfile {
+                reason: "name must contain between 1 and 64 bytes",
+            });
+        }
+        if !request.configuration.is_within_safe_envelope() {
+            return Err(TaskRuntimeError::InvalidProfile {
+                reason: "configuration is outside the safe device envelope",
+            });
+        }
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let existing_created_at = transaction
+            .query_row(
+                "SELECT created_at_ms FROM workstation_profiles WHERE profile_id = ?1",
+                params![&request.id],
+                |row| row.get::<_, u64>(0),
+            )
+            .optional()?;
+        if existing_created_at.is_none() {
+            let count =
+                transaction.query_row("SELECT COUNT(*) FROM workstation_profiles", [], |row| {
+                    row.get::<_, usize>(0)
+                })?;
+            if count >= MAXIMUM_PROFILES {
+                return Err(TaskRuntimeError::ProfileLimitReached {
+                    maximum: MAXIMUM_PROFILES,
+                });
+            }
+        }
+        let profile = WorkstationProfile {
+            schema_version: SCHEMA_VERSION,
+            id: request.id,
+            name: name.into(),
+            configuration: request.configuration,
+            created_at_ms: existing_created_at.unwrap_or(now_ms),
+            updated_at_ms: now_ms,
+        };
+        let stored_json = serde_json::to_string(&profile)?;
+        transaction.execute(
+            "INSERT INTO workstation_profiles (
+                profile_id, stored_json, created_at_ms, updated_at_ms
+             ) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(profile_id) DO UPDATE SET
+                stored_json = excluded.stored_json,
+                updated_at_ms = excluded.updated_at_ms",
+            params![
+                &profile.id,
+                stored_json,
+                profile.created_at_ms,
+                profile.updated_at_ms,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(profile)
+    }
+
+    pub fn list_profiles(&self) -> Result<Vec<WorkstationProfile>, TaskRuntimeError> {
+        let mut statement = self.connection.prepare(
+            "SELECT stored_json FROM workstation_profiles
+             ORDER BY updated_at_ms DESC, profile_id ASC",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        rows.map(|row| {
+            let stored_json = row?;
+            serde_json::from_str(&stored_json).map_err(TaskRuntimeError::from)
+        })
+        .collect()
     }
 
     pub fn start(&mut self, spec: TaskSpec, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
@@ -1495,14 +1592,14 @@ fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
             reason: "requestedBy must not be empty",
         });
     }
-    if spec.steps.is_empty() || spec.steps.len() > 2 {
+    if spec.steps.is_empty() || spec.steps.len() > 4 {
         return Err(TaskRuntimeError::InvalidTaskSpec {
-            reason: "the current runtime accepts one or two planned steps",
+            reason: "the current runtime accepts between one and four planned steps",
         });
     }
-    if spec.goal == TaskGoal::RestoreProfile && spec.steps.len() != 2 {
+    if spec.goal == TaskGoal::RestoreProfile && spec.steps.len() != 2 && spec.steps.len() != 4 {
         return Err(TaskRuntimeError::InvalidTaskSpec {
-            reason: "restore_profile requires exactly two planned steps",
+            reason: "restore_profile requires a legacy two-step or full four-step profile",
         });
     }
     if spec.steps.iter().any(|step| step.step_id.trim().is_empty()) {
@@ -1510,24 +1607,53 @@ fn validate_task_spec(spec: &TaskSpec) -> Result<(), TaskRuntimeError> {
             reason: "stepId must not be empty",
         });
     }
-    if spec.steps.len() == 2
-        && (spec.goal != TaskGoal::RestoreProfile
-            || !matches!(spec.steps[0].action, DeviceAction::DeskMoveToHeight { .. })
-            || !matches!(
-                spec.steps[1].action,
-                DeviceAction::ChairSetLumbarSupport { .. }
-            ))
-    {
+    if spec.steps.len() > 1 && spec.goal != TaskGoal::RestoreProfile {
         return Err(TaskRuntimeError::InvalidTaskSpec {
-            reason: "restore_profile requires desk then lumbar steps",
+            reason: "multi-step plans require restore_profile",
         });
     }
-    if spec.steps.len() == 2 && spec.steps[0].step_id == spec.steps[1].step_id {
+    let valid_profile_order = match spec.steps.as_slice() {
+        [desk, chair] => {
+            matches!(desk.action, DeviceAction::DeskMoveToHeight { .. })
+                && matches!(chair.action, DeviceAction::ChairSetLumbarSupport { .. })
+        }
+        [desk, chair, light, reminder] => {
+            matches!(desk.action, DeviceAction::DeskMoveToHeight { .. })
+                && matches!(chair.action, DeviceAction::ChairAdjustErgonomics(_))
+                && matches!(light.action, DeviceAction::LightConfigure(_))
+                && matches!(reminder.action, DeviceAction::ReminderConfigure(_))
+        }
+        [_] => true,
+        _ => false,
+    };
+    if !valid_profile_order {
+        return Err(TaskRuntimeError::InvalidTaskSpec {
+            reason: "restore_profile steps must follow the protected device order",
+        });
+    }
+    let has_duplicate_step_id = spec.steps.iter().enumerate().any(|(index, step)| {
+        spec.steps[..index]
+            .iter()
+            .any(|previous| previous.step_id == step.step_id)
+    });
+    if has_duplicate_step_id {
         return Err(TaskRuntimeError::InvalidTaskSpec {
             reason: "stepId values must be unique",
         });
     }
     Ok(())
+}
+
+fn valid_profile_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 fn evaluate_task_policy(authority: &PolicyAuthority, spec: &TaskSpec) -> PolicyDecision {

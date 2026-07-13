@@ -115,6 +115,48 @@ impl PolicyAuthority {
                 rule_ids: vec!["chair.lumbar.requires_approval".into()],
                 reason_code: None,
             },
+            DeviceAction::ChairAdjustErgonomics(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                PolicyDecision {
+                    outcome: PolicyOutcome::Deny,
+                    rule_ids: vec!["chair.ergonomics.safe_envelope".into()],
+                    reason_code: Some("chair_ergonomics_out_of_range".into()),
+                }
+            }
+            DeviceAction::ChairAdjustErgonomics(_) => PolicyDecision {
+                outcome: PolicyOutcome::RequireApproval,
+                rule_ids: vec!["chair.motion.requires_approval".into()],
+                reason_code: None,
+            },
+            DeviceAction::LightConfigure(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                PolicyDecision {
+                    outcome: PolicyOutcome::Deny,
+                    rule_ids: vec!["light.configuration.safe_envelope".into()],
+                    reason_code: Some("light_configuration_out_of_range".into()),
+                }
+            }
+            DeviceAction::LightConfigure(_) => PolicyDecision {
+                outcome: PolicyOutcome::RequireApproval,
+                rule_ids: vec!["light.configuration.requires_approval".into()],
+                reason_code: None,
+            },
+            DeviceAction::ReminderConfigure(configuration)
+                if !configuration.is_within_safe_envelope() =>
+            {
+                PolicyDecision {
+                    outcome: PolicyOutcome::Deny,
+                    rule_ids: vec!["reminder.configuration.safe_envelope".into()],
+                    reason_code: Some("reminder_interval_out_of_range".into()),
+                }
+            }
+            DeviceAction::ReminderConfigure(_) => PolicyDecision {
+                outcome: PolicyOutcome::RequireApproval,
+                rule_ids: vec!["reminder.configuration.requires_approval".into()],
+                reason_code: None,
+            },
         }
     }
 

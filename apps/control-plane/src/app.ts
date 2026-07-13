@@ -8,6 +8,7 @@ import {
   plannerEvaluationsResponseSchema,
   plannerProviderIdSchema,
   runtimeObservationSchema,
+  saveWorkstationProfileRequestSchema,
   type TaskPlanRequest,
   type TaskPlanResponse,
   taskPlanRequestSchema,
@@ -434,6 +435,18 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       context.json(
         await station.resumeTask(context.req.param("runId"), operatorId, now()),
       ),
+    )
+    .get("/api/profiles", async (context) =>
+      context.json(await station.listProfiles()),
+    )
+    .post(
+      "/api/profiles",
+      zValidator("json", saveWorkstationProfileRequestSchema),
+      async (context) =>
+        context.json(
+          await station.saveProfile(context.req.valid("json"), now()),
+          201,
+        ),
     )
     .get("/api/station/snapshot", async (context) =>
       context.json(await station.stationSnapshot(now())),

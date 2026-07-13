@@ -1,10 +1,13 @@
 use device_sim::SqliteSimulator;
-use ergopilot_protocol::{CommandStatus, DeviceAction, PolicyOutcome, SCHEMA_VERSION};
+use ergopilot_protocol::{
+    ChairErgonomics, CommandStatus, DeviceAction, LightConfiguration, PolicyOutcome,
+    ReminderConfiguration, SCHEMA_VERSION,
+};
 use policy_core::PolicyAuthority;
 use station_core::DeviceAdapter;
 use task_runtime::{
-    ApprovalStatus, SuspensionReason, TaskGoal, TaskRunStatus, TaskRuntime, TaskRuntimeError,
-    TaskSpec,
+    ApprovalStatus, PlannedStep, SuspensionReason, TaskConstraints, TaskGoal, TaskRunStatus,
+    TaskRuntime, TaskRuntimeError, TaskSpec,
 };
 
 #[test]
@@ -112,6 +115,71 @@ fn one_approval_executes_a_desk_and_lumbar_profile_in_order() {
             .count(),
         2
     );
+}
+
+#[test]
+fn one_approval_executes_a_complete_workstation_profile_in_order() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let spec = TaskSpec {
+        schema_version: SCHEMA_VERSION,
+        task_id: "task-complete-profile".into(),
+        goal: TaskGoal::RestoreProfile,
+        requested_by: "user-1".into(),
+        constraints: TaskConstraints::default(),
+        assumptions: vec!["desk area is clear".into()],
+        steps: vec![
+            PlannedStep {
+                step_id: "desk-1".into(),
+                action: DeviceAction::DeskMoveToHeight { height_mm: 760 },
+            },
+            PlannedStep {
+                step_id: "chair-1".into(),
+                action: DeviceAction::ChairAdjustErgonomics(ChairErgonomics {
+                    seat_height_mm: 470,
+                    seat_depth_mm: 450,
+                    lumbar_support_percent: 55,
+                    armrest_height_mm: 240,
+                    armrest_depth_mm: 10,
+                    armrest_width_mm: 480,
+                    armrest_angle_deg: -5,
+                    recline_angle_deg: 110,
+                    recline_resistance_percent: 60,
+                    recline_locked: true,
+                    headrest_height_mm: 55,
+                    headrest_angle_deg: 5,
+                }),
+            },
+            PlannedStep {
+                step_id: "light-1".into(),
+                action: DeviceAction::LightConfigure(LightConfiguration {
+                    brightness_percent: 80,
+                    color_temperature_k: 4_800,
+                }),
+            },
+            PlannedStep {
+                step_id: "reminder-1".into(),
+                action: DeviceAction::ReminderConfigure(ReminderConfiguration {
+                    enabled: true,
+                    interval_minutes: 45,
+                }),
+            },
+        ],
+    };
+
+    let awaiting = runtime.start(spec, 1_000).unwrap();
+    let completed = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+    let snapshot = runtime.station_snapshot(1_200).unwrap();
+
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(completed.completed_steps.len(), 4);
+    assert_eq!(snapshot.desk_height_mm, 760);
+    assert_eq!(snapshot.seat_depth_mm, 450);
+    assert_eq!(snapshot.light_color_temperature_k, 4_800);
+    assert_eq!(snapshot.reminder_interval_minutes, 45);
+    assert_eq!(snapshot.movement_count, 4);
 }
 
 #[test]

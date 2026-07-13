@@ -1,6 +1,7 @@
 use device_sim::{NextFault, SimulatorError, SqliteSimulator};
 use ergopilot_protocol::{
-    CommandEvent, CommandStatus, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION,
+    CommandEvent, CommandStatus, DeviceAction, DeviceCommand, PolicyGrant,
+    SaveWorkstationProfileRequest, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,9 @@ impl DemoError {
             }
             Self::Task(
                 TaskRuntimeError::UnsupportedTaskSchemaVersion { .. }
-                | TaskRuntimeError::InvalidTaskSpec { .. },
+                | TaskRuntimeError::InvalidTaskSpec { .. }
+                | TaskRuntimeError::InvalidProfile { .. }
+                | TaskRuntimeError::ProfileLimitReached { .. },
             ) => "invalid_request",
             Self::Task(TaskRuntimeError::RunNotFound { .. }) => "run_not_found",
             Self::Task(
@@ -189,6 +192,14 @@ pub enum RpcRequest {
     StationSnapshot {
         #[serde(rename = "observedAtMs")]
         observed_at_ms: u64,
+    },
+    #[serde(rename = "profile.list")]
+    ListProfiles {},
+    #[serde(rename = "profile.save")]
+    SaveProfile {
+        profile: SaveWorkstationProfileRequest,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
     },
 }
 
@@ -308,6 +319,10 @@ pub fn invoke_rpc_with_motion_step_delay(
         } => serde_json::to_value(runtime.resume(&run_id, &resumed_by, now_ms)?)?,
         RpcRequest::StationSnapshot { observed_at_ms } => {
             serde_json::to_value(runtime.station_snapshot(observed_at_ms)?)?
+        }
+        RpcRequest::ListProfiles {} => json!({ "profiles": runtime.list_profiles()? }),
+        RpcRequest::SaveProfile { profile, now_ms } => {
+            serde_json::to_value(runtime.save_profile(profile, now_ms)?)?
         }
     };
     Ok(result)

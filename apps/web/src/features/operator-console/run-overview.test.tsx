@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
-import type { TaskRunView } from "@ergopilot/contracts";
+import {
+  defaultWorkstationSnapshotFields,
+  type TaskRunView,
+} from "@ergopilot/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -140,6 +143,7 @@ const recoveredActuatorRun: TaskRunView = {
     idempotencyKey: "run-web-actuator-fault:desk-1-recovery-1",
     status: "succeeded",
     outcome: {
+      ...defaultWorkstationSnapshotFields,
       stateVersion: 3,
       deskHeightMm: 790,
       lumbarSupportPercent: 35,
@@ -279,6 +283,7 @@ const completedProfileRun: TaskRunView = {
         idempotencyKey: "run-web-profile:desk-1",
         status: "succeeded",
         outcome: {
+          ...defaultWorkstationSnapshotFields,
           stateVersion: 2,
           deskHeightMm: 790,
           lumbarSupportPercent: 35,
@@ -303,6 +308,7 @@ const completedProfileRun: TaskRunView = {
         idempotencyKey: "run-web-profile:chair-1",
         status: "succeeded",
         outcome: {
+          ...defaultWorkstationSnapshotFields,
           stateVersion: 3,
           deskHeightMm: 790,
           lumbarSupportPercent: 65,

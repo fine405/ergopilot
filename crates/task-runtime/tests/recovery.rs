@@ -57,6 +57,7 @@ impl ApplyFailureDevice {
                 desk_height_mm: 720,
                 lumbar_support_percent: 35,
                 movement_count: 0,
+                ..WorkstationSnapshot::default()
             },
         }
     }
@@ -88,6 +89,7 @@ impl ReadbackFailureDevice {
                 desk_height_mm: 720,
                 lumbar_support_percent: 35,
                 movement_count: 0,
+                ..WorkstationSnapshot::default()
             },
             fail_next_snapshot: false,
         }
@@ -115,6 +117,28 @@ impl DeviceAdapter for ReadbackFailureDevice {
             }
             DeviceAction::ChairSetLumbarSupport { level_percent } => {
                 self.snapshot.lumbar_support_percent = *level_percent;
+            }
+            DeviceAction::ChairAdjustErgonomics(configuration) => {
+                self.snapshot.seat_height_mm = configuration.seat_height_mm;
+                self.snapshot.seat_depth_mm = configuration.seat_depth_mm;
+                self.snapshot.lumbar_support_percent = configuration.lumbar_support_percent;
+                self.snapshot.armrest_height_mm = configuration.armrest_height_mm;
+                self.snapshot.armrest_depth_mm = configuration.armrest_depth_mm;
+                self.snapshot.armrest_width_mm = configuration.armrest_width_mm;
+                self.snapshot.armrest_angle_deg = configuration.armrest_angle_deg;
+                self.snapshot.recline_angle_deg = configuration.recline_angle_deg;
+                self.snapshot.recline_resistance_percent = configuration.recline_resistance_percent;
+                self.snapshot.recline_locked = configuration.recline_locked;
+                self.snapshot.headrest_height_mm = configuration.headrest_height_mm;
+                self.snapshot.headrest_angle_deg = configuration.headrest_angle_deg;
+            }
+            DeviceAction::LightConfigure(configuration) => {
+                self.snapshot.light_brightness_percent = configuration.brightness_percent;
+                self.snapshot.light_color_temperature_k = configuration.color_temperature_k;
+            }
+            DeviceAction::ReminderConfigure(configuration) => {
+                self.snapshot.reminder_enabled = configuration.enabled;
+                self.snapshot.reminder_interval_minutes = configuration.interval_minutes;
             }
         }
         self.snapshot.state_version += 1;

@@ -80,6 +80,7 @@ fn snapshot(observed_at_ms: u64) -> WorkstationSnapshot {
         desk_height_mm: 720,
         lumbar_support_percent: 35,
         movement_count: 0,
+        ..WorkstationSnapshot::default()
     }
 }
 

@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
-import type { TaskRunView } from "@ergopilot/contracts";
+import {
+  defaultWorkstationSnapshotFields,
+  type TaskRunView,
+} from "@ergopilot/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -212,6 +215,7 @@ function run(
             outcome:
               status === "completed"
                 ? {
+                    ...defaultWorkstationSnapshotFields,
                     stateVersion: 2,
                     deskHeightMm: 820,
                     lumbarSupportPercent: 35,

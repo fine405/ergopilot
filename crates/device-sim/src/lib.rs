@@ -40,6 +40,22 @@ impl SqliteSimulator {
                 state_version INTEGER NOT NULL,
                 desk_height_mm INTEGER NOT NULL,
                 lumbar_support_percent INTEGER NOT NULL DEFAULT 35,
+                seat_height_mm INTEGER NOT NULL DEFAULT 470,
+                seat_depth_mm INTEGER NOT NULL DEFAULT 450,
+                armrest_height_mm INTEGER NOT NULL DEFAULT 240,
+                armrest_depth_mm INTEGER NOT NULL DEFAULT 0,
+                armrest_width_mm INTEGER NOT NULL DEFAULT 480,
+                armrest_angle_deg INTEGER NOT NULL DEFAULT 0,
+                recline_angle_deg INTEGER NOT NULL DEFAULT 110,
+                recline_resistance_percent INTEGER NOT NULL DEFAULT 55,
+                recline_locked INTEGER NOT NULL DEFAULT 1,
+                headrest_height_mm INTEGER NOT NULL DEFAULT 50,
+                headrest_angle_deg INTEGER NOT NULL DEFAULT 0,
+                light_brightness_percent INTEGER NOT NULL DEFAULT 70,
+                light_color_temperature_k INTEGER NOT NULL DEFAULT 4300,
+                reminder_enabled INTEGER NOT NULL DEFAULT 1,
+                reminder_interval_minutes INTEGER NOT NULL DEFAULT 45,
+                reminder_started_at_ms INTEGER NOT NULL DEFAULT 0,
                 movement_count INTEGER NOT NULL
             );
 
@@ -65,20 +81,26 @@ impl SqliteSimulator {
             ) VALUES (1, 'station-sim-1', 1, 720, 0);
             ",
         )?;
-        let has_lumbar_support = {
-            let mut statement = connection.prepare("PRAGMA table_info(simulator_state)")?;
-            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-            columns
-                .collect::<Result<Vec<_>, _>>()?
-                .iter()
-                .any(|column| column == "lumbar_support_percent")
-        };
-        if !has_lumbar_support {
-            connection.execute(
-                "ALTER TABLE simulator_state
-                 ADD COLUMN lumbar_support_percent INTEGER NOT NULL DEFAULT 35",
-                [],
-            )?;
+        for (column, definition) in [
+            ("lumbar_support_percent", "INTEGER NOT NULL DEFAULT 35"),
+            ("seat_height_mm", "INTEGER NOT NULL DEFAULT 470"),
+            ("seat_depth_mm", "INTEGER NOT NULL DEFAULT 450"),
+            ("armrest_height_mm", "INTEGER NOT NULL DEFAULT 240"),
+            ("armrest_depth_mm", "INTEGER NOT NULL DEFAULT 0"),
+            ("armrest_width_mm", "INTEGER NOT NULL DEFAULT 480"),
+            ("armrest_angle_deg", "INTEGER NOT NULL DEFAULT 0"),
+            ("recline_angle_deg", "INTEGER NOT NULL DEFAULT 110"),
+            ("recline_resistance_percent", "INTEGER NOT NULL DEFAULT 55"),
+            ("recline_locked", "INTEGER NOT NULL DEFAULT 1"),
+            ("headrest_height_mm", "INTEGER NOT NULL DEFAULT 50"),
+            ("headrest_angle_deg", "INTEGER NOT NULL DEFAULT 0"),
+            ("light_brightness_percent", "INTEGER NOT NULL DEFAULT 70"),
+            ("light_color_temperature_k", "INTEGER NOT NULL DEFAULT 4300"),
+            ("reminder_enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("reminder_interval_minutes", "INTEGER NOT NULL DEFAULT 45"),
+            ("reminder_started_at_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            ensure_column(&connection, column, definition)?;
         }
 
         Ok(Self {
@@ -100,7 +122,14 @@ impl SqliteSimulator {
     fn read_snapshot(&self, observed_at_ms: u64) -> Result<WorkstationSnapshot, rusqlite::Error> {
         self.connection.query_row(
             "SELECT station_id, state_version, desk_height_mm,
-                    lumbar_support_percent, movement_count
+                    lumbar_support_percent, seat_height_mm, seat_depth_mm,
+                    armrest_height_mm, armrest_depth_mm, armrest_width_mm,
+                    armrest_angle_deg, recline_angle_deg,
+                    recline_resistance_percent, recline_locked,
+                    headrest_height_mm, headrest_angle_deg,
+                    light_brightness_percent, light_color_temperature_k,
+                    reminder_enabled, reminder_interval_minutes,
+                    reminder_started_at_ms, movement_count
              FROM simulator_state WHERE singleton = 1",
             [],
             |row| {
@@ -111,7 +140,23 @@ impl SqliteSimulator {
                     observed_at_ms,
                     desk_height_mm: row.get(2)?,
                     lumbar_support_percent: row.get(3)?,
-                    movement_count: row.get(4)?,
+                    seat_height_mm: row.get(4)?,
+                    seat_depth_mm: row.get(5)?,
+                    armrest_height_mm: row.get(6)?,
+                    armrest_depth_mm: row.get(7)?,
+                    armrest_width_mm: row.get(8)?,
+                    armrest_angle_deg: row.get(9)?,
+                    recline_angle_deg: row.get(10)?,
+                    recline_resistance_percent: row.get(11)?,
+                    recline_locked: row.get(12)?,
+                    headrest_height_mm: row.get(13)?,
+                    headrest_angle_deg: row.get(14)?,
+                    light_brightness_percent: row.get(15)?,
+                    light_color_temperature_k: row.get(16)?,
+                    reminder_enabled: row.get(17)?,
+                    reminder_interval_minutes: row.get(18)?,
+                    reminder_started_at_ms: row.get(19)?,
+                    movement_count: row.get(20)?,
                 })
             },
         )
@@ -135,6 +180,7 @@ impl SqliteSimulator {
         &mut self,
         action: &DeviceAction,
         expected_state_version: u64,
+        started_at_ms: u64,
     ) -> Result<DeviceExecution, DeviceError> {
         let execution = self.take_instant_execution()?;
         let updated = match action {
@@ -157,6 +203,73 @@ impl SqliteSimulator {
                    AND state_version = ?2
                    AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
                 params![level_percent, expected_state_version],
+            ),
+            DeviceAction::ChairAdjustErgonomics(configuration) => self.connection.execute(
+                "UPDATE simulator_state
+                 SET seat_height_mm = ?1,
+                     seat_depth_mm = ?2,
+                     lumbar_support_percent = ?3,
+                     armrest_height_mm = ?4,
+                     armrest_depth_mm = ?5,
+                     armrest_width_mm = ?6,
+                     armrest_angle_deg = ?7,
+                     recline_angle_deg = ?8,
+                     recline_resistance_percent = ?9,
+                     recline_locked = ?10,
+                     headrest_height_mm = ?11,
+                     headrest_angle_deg = ?12,
+                     state_version = state_version + 1,
+                     movement_count = movement_count + 1
+                 WHERE singleton = 1
+                   AND state_version = ?13
+                   AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
+                params![
+                    configuration.seat_height_mm,
+                    configuration.seat_depth_mm,
+                    configuration.lumbar_support_percent,
+                    configuration.armrest_height_mm,
+                    configuration.armrest_depth_mm,
+                    configuration.armrest_width_mm,
+                    configuration.armrest_angle_deg,
+                    configuration.recline_angle_deg,
+                    configuration.recline_resistance_percent,
+                    configuration.recline_locked,
+                    configuration.headrest_height_mm,
+                    configuration.headrest_angle_deg,
+                    expected_state_version,
+                ],
+            ),
+            DeviceAction::LightConfigure(configuration) => self.connection.execute(
+                "UPDATE simulator_state
+                 SET light_brightness_percent = ?1,
+                     light_color_temperature_k = ?2,
+                     state_version = state_version + 1,
+                     movement_count = movement_count + 1
+                 WHERE singleton = 1
+                   AND state_version = ?3
+                   AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
+                params![
+                    configuration.brightness_percent,
+                    configuration.color_temperature_k,
+                    expected_state_version,
+                ],
+            ),
+            DeviceAction::ReminderConfigure(configuration) => self.connection.execute(
+                "UPDATE simulator_state
+                 SET reminder_enabled = ?1,
+                     reminder_interval_minutes = ?2,
+                     reminder_started_at_ms = ?3,
+                     state_version = state_version + 1,
+                     movement_count = movement_count + 1
+                 WHERE singleton = 1
+                   AND state_version = ?4
+                   AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
+                params![
+                    configuration.enabled,
+                    configuration.interval_minutes,
+                    started_at_ms,
+                    expected_state_version,
+                ],
             ),
         }
         .map_err(storage_error)?;
@@ -367,7 +480,7 @@ impl DeviceAdapter for SqliteSimulator {
         action: &DeviceAction,
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
-        self.apply_instant(action, expected_state_version)
+        self.apply_instant(action, expected_state_version, 0)
     }
 
     fn apply_command(
@@ -377,9 +490,14 @@ impl DeviceAdapter for SqliteSimulator {
     ) -> Result<DeviceExecution, DeviceError> {
         match command.action {
             DeviceAction::DeskMoveToHeight { .. } => self.apply_progressive(command, started_at_ms),
-            DeviceAction::ChairSetLumbarSupport { .. } => {
-                self.apply_instant(&command.action, command.expected_state_version)
-            }
+            DeviceAction::ChairSetLumbarSupport { .. }
+            | DeviceAction::ChairAdjustErgonomics(_)
+            | DeviceAction::LightConfigure(_)
+            | DeviceAction::ReminderConfigure(_) => self.apply_instant(
+                &command.action,
+                command.expected_state_version,
+                started_at_ms,
+            ),
         }
     }
 
@@ -426,6 +544,26 @@ fn interpolate_height(start_height_mm: u16, target_height_mm: u16, step: u8) -> 
     let distance = i32::from(target_height_mm) - start;
     let height = start + distance * i32::from(step) / i32::from(MOTION_STEPS);
     u16::try_from(height).expect("safe desk height interpolation must remain within u16")
+}
+
+fn ensure_column(
+    connection: &Connection,
+    column: &str,
+    definition: &str,
+) -> Result<(), rusqlite::Error> {
+    let mut statement = connection.prepare("PRAGMA table_info(simulator_state)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let exists = columns
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|existing| existing == column);
+    if !exists {
+        connection.execute(
+            &format!("ALTER TABLE simulator_state ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 fn storage_error(error: rusqlite::Error) -> DeviceError {

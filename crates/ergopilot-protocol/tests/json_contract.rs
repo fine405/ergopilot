@@ -1,6 +1,6 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandEventType, CommandFailureReason, CommandStatus, CommandView, DeviceAction,
-    DeviceCommand, PolicyGrant, SCHEMA_VERSION,
+    ChairErgonomics, CommandEvent, CommandEventType, CommandFailureReason, CommandStatus,
+    CommandView, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION,
 };
 use serde_json::json;
 
@@ -40,6 +40,34 @@ fn device_command_has_a_stable_cross_runtime_json_contract() {
     assert_eq!(
         serde_json::from_value::<DeviceCommand>(json_value).unwrap(),
         command
+    );
+}
+
+#[test]
+fn ergonomic_chair_action_has_a_stable_cross_runtime_json_contract() {
+    let action = DeviceAction::ChairAdjustErgonomics(ChairErgonomics {
+        seat_height_mm: 470,
+        seat_depth_mm: 450,
+        lumbar_support_percent: 55,
+        armrest_height_mm: 240,
+        armrest_depth_mm: 10,
+        armrest_width_mm: 480,
+        armrest_angle_deg: -5,
+        recline_angle_deg: 110,
+        recline_resistance_percent: 60,
+        recline_locked: true,
+        headrest_height_mm: 55,
+        headrest_angle_deg: 5,
+    });
+
+    let json_value = serde_json::to_value(&action).unwrap();
+
+    assert_eq!(json_value["type"], "chair.adjust_ergonomics");
+    assert_eq!(json_value["input"]["seatHeightMm"], 470);
+    assert_eq!(json_value["input"]["reclineLocked"], true);
+    assert_eq!(
+        serde_json::from_value::<DeviceAction>(json_value).unwrap(),
+        action
     );
 }
 

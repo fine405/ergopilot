@@ -1,6 +1,20 @@
-import type { TaskSpec } from "@ergopilot/contracts";
-import { ArrowRight, MoveVertical, ShieldCheck } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import {
+  type ChairErgonomics,
+  defaultWorkstationConfiguration,
+  type SaveWorkstationProfileRequest,
+  type TaskSpec,
+  type WorkstationConfiguration,
+  type WorkstationProfile,
+  type WorkstationSnapshot,
+  workstationConfigurationSchema,
+} from "@ergopilot/contracts";
+import {
+  ArrowRight,
+  BookmarkPlus,
+  ShieldCheck,
+  SlidersHorizontal,
+} from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,41 +28,69 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-
-import { buildFocusTask } from "./task-builder";
-
-const heightPresets = [720, 780, 1_050];
+import {
+  buildWorkstationProfileTask,
+  builtInWorkstationPresets,
+  configurationFromSnapshot,
+} from "@/features/workstation-profile/workstation-profile";
 
 interface TaskComposerProps {
+  snapshot: WorkstationSnapshot | undefined;
+  profiles: WorkstationProfile[];
   onSubmit: (task: TaskSpec) => Promise<void>;
+  onSaveProfile: (profile: SaveWorkstationProfileRequest) => Promise<void>;
   isPending: boolean;
+  isSaving: boolean;
   error: string | null;
 }
 
+type NumericChairKey = Exclude<keyof ChairErgonomics, "reclineLocked">;
+
 export function TaskComposer({
+  snapshot,
+  profiles,
   onSubmit,
+  onSaveProfile,
   isPending,
+  isSaving,
   error,
 }: TaskComposerProps) {
   const [requestedBy, setRequestedBy] = useState("demo-user");
-  const [deskHeightMm, setDeskHeightMm] = useState(780);
   const [durationMinutes, setDurationMinutes] = useState(45);
+  const [configuration, setConfiguration] = useState<WorkstationConfiguration>(
+    snapshot
+      ? configurationFromSnapshot(snapshot)
+      : defaultWorkstationConfiguration,
+  );
+  const [profileName, setProfileName] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (snapshot) setConfiguration(configurationFromSnapshot(snapshot));
+  }, [snapshot]);
+
+  function updateChair(key: NumericChairKey, value: number) {
+    setConfiguration((current) => ({
+      ...current,
+      chair: { ...current.chair, [key]: value },
+    }));
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (deskHeightMm < 620 || deskHeightMm > 1_280) {
-      setValidationError("Desk height must stay within 620–1280 mm.");
+    const parsed = workstationConfigurationSchema.safeParse(configuration);
+    if (!parsed.success || !requestedBy.trim()) {
+      setValidationError("Keep every control inside its displayed safe range.");
       return;
     }
     setValidationError(null);
     try {
       await onSubmit(
-        buildFocusTask({
-          taskId: `task-${crypto.randomUUID()}`,
-          requestedBy,
-          deskHeightMm,
+        buildWorkstationProfileTask({
+          taskId: `task-profile-${crypto.randomUUID()}`,
+          requestedBy: requestedBy.trim(),
           durationMinutes,
+          configuration: parsed.data,
         }),
       );
     } catch {
@@ -56,74 +98,102 @@ export function TaskComposer({
     }
   }
 
+  async function handleSaveProfile() {
+    const name = profileName.trim();
+    const parsed = workstationConfigurationSchema.safeParse(configuration);
+    if (!name || !parsed.success) {
+      setValidationError("Add a preset name and keep every value in range.");
+      return;
+    }
+    setValidationError(null);
+    try {
+      await onSaveProfile({
+        id: `profile-${crypto.randomUUID()}`,
+        name,
+        configuration: parsed.data,
+      });
+      setProfileName("");
+    } catch {
+      // React Query exposes the mutation error through the `error` prop.
+    }
+  }
+
+  const presets = [
+    ...builtInWorkstationPresets,
+    ...profiles.map((profile) => ({
+      id: profile.id,
+      name: profile.name,
+      description: "Saved in the local station database.",
+      configuration: profile.configuration,
+    })),
+  ];
+
   return (
     <Card>
       <CardHeader>
         <div className="mb-2 flex size-9 items-center justify-center rounded-lg border bg-muted">
-          <MoveVertical className="size-4 text-primary" aria-hidden="true" />
+          <SlidersHorizontal
+            className="size-4 text-primary"
+            aria-hidden="true"
+          />
         </div>
-        <CardTitle>Manual task builder</CardTitle>
+        <CardTitle>Workstation controls</CardTitle>
         <CardDescription>
-          Deterministic fallback with no model dependency. Motion still waits
-          for approval.
+          Manual controls and presets produce the same protected four-step task
+          as Chat. Nothing moves before approval.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form className="space-y-5" onSubmit={handleSubmit}>
-          <div className="space-y-2">
-            <Label htmlFor="requested-by">Requested by</Label>
-            <Input
-              id="requested-by"
-              value={requestedBy}
-              onChange={(event) => setRequestedBy(event.target.value)}
-              required
-              autoComplete="username"
-            />
-          </div>
-
-          <div className="space-y-2">
+        <form className="space-y-6" onSubmit={handleSubmit}>
+          <section className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="desk-height">Target desk height</Label>
-              <span className="font-mono text-xs text-muted-foreground">
-                safe: 620–1280 mm
-              </span>
-            </div>
-            <div className="relative">
-              <Input
-                id="desk-height"
-                type="number"
-                min={620}
-                max={1_280}
-                value={deskHeightMm}
-                onChange={(event) =>
-                  setDeskHeightMm(event.target.valueAsNumber)
-                }
-                className="pr-12 font-mono"
-                required
+              <div>
+                <p className="text-sm font-medium">Scene presets</p>
+                <p className="text-xs text-muted-foreground">
+                  Office, rest, standing, or station-saved memory.
+                </p>
+              </div>
+              <ShieldCheck
+                className="size-4 text-status-warn"
+                aria-label="Approval required"
               />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
-                mm
-              </span>
             </div>
-            <div className="flex gap-2">
-              {heightPresets.map((height) => (
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {presets.map((preset) => (
                 <Button
-                  key={height}
+                  key={preset.id}
                   type="button"
-                  size="sm"
-                  variant={deskHeightMm === height ? "secondary" : "outline"}
-                  onClick={() => setDeskHeightMm(height)}
-                  className="font-mono"
+                  variant="outline"
+                  className="h-auto items-start justify-start px-3 py-2 text-left"
+                  aria-label={`Apply ${preset.name} preset`}
+                  onClick={() => setConfiguration(preset.configuration)}
                 >
-                  {height}
+                  <span>
+                    <span className="block font-medium">{preset.name}</span>
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                      {preset.description}
+                    </span>
+                  </span>
                 </Button>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div className="space-y-2">
-            <Label htmlFor="duration">Focus duration</Label>
-            <div className="relative">
+          <Separator />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="requested-by">Requested by</Label>
+              <Input
+                id="requested-by"
+                value={requestedBy}
+                onChange={(event) => setRequestedBy(event.target.value)}
+                required
+                autoComplete="username"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="duration">Session duration</Label>
               <Input
                 id="duration"
                 type="number"
@@ -134,42 +204,262 @@ export function TaskComposer({
                 onChange={(event) =>
                   setDurationMinutes(event.target.valueAsNumber)
                 }
-                className="pr-16 font-mono"
                 required
               />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
-                minutes
-              </span>
             </div>
           </div>
 
-          <Separator />
-
-          <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-medium">Deterministic plan</span>
-              <span className="font-mono text-muted-foreground">1 step</span>
+          <details open className="rounded-lg border bg-muted/20 p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Desk, light and reminder
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <RangeControl
+                id="desk-height"
+                label="Desk height"
+                value={configuration.deskHeightMm}
+                min={620}
+                max={1_280}
+                step={10}
+                unit="mm"
+                onChange={(deskHeightMm) =>
+                  setConfiguration((current) => ({ ...current, deskHeightMm }))
+                }
+              />
+              <RangeControl
+                id="light-brightness"
+                label="Light brightness"
+                value={configuration.light.brightnessPercent}
+                min={0}
+                max={100}
+                step={1}
+                unit="%"
+                onChange={(brightnessPercent) =>
+                  setConfiguration((current) => ({
+                    ...current,
+                    light: { ...current.light, brightnessPercent },
+                  }))
+                }
+              />
+              <RangeControl
+                id="light-temperature"
+                label="Light temperature"
+                value={configuration.light.colorTemperatureK}
+                min={2_700}
+                max={6_500}
+                step={100}
+                unit="K"
+                onChange={(colorTemperatureK) =>
+                  setConfiguration((current) => ({
+                    ...current,
+                    light: { ...current.light, colorTemperatureK },
+                  }))
+                }
+              />
+              <RangeControl
+                id="reminder-interval"
+                label="Sedentary reminder"
+                value={configuration.reminder.intervalMinutes}
+                min={20}
+                max={180}
+                step={5}
+                unit="min"
+                onChange={(intervalMinutes) =>
+                  setConfiguration((current) => ({
+                    ...current,
+                    reminder: { ...current.reminder, intervalMinutes },
+                  }))
+                }
+              />
+              <label className="flex items-center gap-3 rounded-md border bg-background/60 px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={configuration.reminder.enabled}
+                  onChange={(event) =>
+                    setConfiguration((current) => ({
+                      ...current,
+                      reminder: {
+                        ...current.reminder,
+                        enabled: event.target.checked,
+                      },
+                    }))
+                  }
+                />
+                Reminder enabled
+              </label>
             </div>
-            <div className="flex items-center gap-3 text-sm">
-              <div className="flex size-7 items-center justify-center rounded-md bg-background font-mono text-xs ring-1 ring-border">
-                01
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-medium">desk.move_to_height</p>
-                <p className="font-mono text-xs text-muted-foreground">
-                  heightMm: {deskHeightMm}
-                </p>
-              </div>
-              <ShieldCheck
-                className="size-4 text-status-warn"
-                aria-label="Approval required"
+          </details>
+
+          <details className="rounded-lg border bg-muted/20 p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Ergonomic chair — seat and lumbar
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <RangeControl
+                id="seat-height"
+                label="Seat height"
+                value={configuration.chair.seatHeightMm}
+                min={420}
+                max={550}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("seatHeightMm", value)}
+              />
+              <RangeControl
+                id="seat-depth"
+                label="Seat depth"
+                value={configuration.chair.seatDepthMm}
+                min={380}
+                max={520}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("seatDepthMm", value)}
+              />
+              <RangeControl
+                id="lumbar-support"
+                label="Lumbar support"
+                value={configuration.chair.lumbarSupportPercent}
+                min={0}
+                max={100}
+                step={1}
+                unit="%"
+                onChange={(value) => updateChair("lumbarSupportPercent", value)}
               />
             </div>
-          </div>
+          </details>
+
+          <details className="rounded-lg border bg-muted/20 p-4">
+            <summary className="cursor-pointer text-sm font-medium">
+              Ergonomic chair — armrests, recline and headrest
+            </summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <RangeControl
+                id="armrest-height"
+                label="Armrest height"
+                value={configuration.chair.armrestHeightMm}
+                min={180}
+                max={310}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("armrestHeightMm", value)}
+              />
+              <RangeControl
+                id="armrest-depth"
+                label="Armrest fore / aft"
+                value={configuration.chair.armrestDepthMm}
+                min={-60}
+                max={60}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("armrestDepthMm", value)}
+              />
+              <RangeControl
+                id="armrest-width"
+                label="Armrest spacing"
+                value={configuration.chair.armrestWidthMm}
+                min={420}
+                max={560}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("armrestWidthMm", value)}
+              />
+              <RangeControl
+                id="armrest-angle"
+                label="Armrest swivel"
+                value={configuration.chair.armrestAngleDeg}
+                min={-30}
+                max={30}
+                step={1}
+                unit="°"
+                onChange={(value) => updateChair("armrestAngleDeg", value)}
+              />
+              <RangeControl
+                id="recline-angle"
+                label="Backrest recline"
+                value={configuration.chair.reclineAngleDeg}
+                min={110}
+                max={135}
+                step={1}
+                unit="°"
+                onChange={(value) => updateChair("reclineAngleDeg", value)}
+              />
+              <RangeControl
+                id="recline-resistance"
+                label="Recline resistance"
+                value={configuration.chair.reclineResistancePercent}
+                min={0}
+                max={100}
+                step={1}
+                unit="%"
+                onChange={(value) =>
+                  updateChair("reclineResistancePercent", value)
+                }
+              />
+              <RangeControl
+                id="headrest-height"
+                label="Headrest height"
+                value={configuration.chair.headrestHeightMm}
+                min={0}
+                max={120}
+                step={5}
+                unit="mm"
+                onChange={(value) => updateChair("headrestHeightMm", value)}
+              />
+              <RangeControl
+                id="headrest-angle"
+                label="Headrest angle"
+                value={configuration.chair.headrestAngleDeg}
+                min={-30}
+                max={30}
+                step={1}
+                unit="°"
+                onChange={(value) => updateChair("headrestAngleDeg", value)}
+              />
+              <label className="flex items-center gap-3 rounded-md border bg-background/60 px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={configuration.chair.reclineLocked}
+                  onChange={(event) =>
+                    setConfiguration((current) => ({
+                      ...current,
+                      chair: {
+                        ...current.chair,
+                        reclineLocked: event.target.checked,
+                      },
+                    }))
+                  }
+                />
+                Recline locked
+              </label>
+            </div>
+          </details>
+
+          <section className="grid gap-3 rounded-lg border bg-muted/20 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-2">
+              <Label htmlFor="profile-name">Preset name</Label>
+              <Input
+                id="profile-name"
+                maxLength={64}
+                placeholder="My reading mode"
+                value={profileName}
+                onChange={(event) => setProfileName(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSaving}
+              onClick={() => void handleSaveProfile()}
+              aria-label="Save current preset"
+            >
+              <BookmarkPlus />
+              {isSaving ? "Saving…" : "Save current"}
+            </Button>
+          </section>
 
           {(validationError || error) && (
             <Alert variant="destructive">
-              <AlertTitle>Task not started</AlertTitle>
+              <AlertTitle>Configuration not ready</AlertTitle>
               <AlertDescription>{validationError ?? error}</AlertDescription>
             </Alert>
           )}
@@ -178,13 +468,60 @@ export function TaskComposer({
             type="submit"
             size="lg"
             className="w-full"
-            disabled={isPending}
+            disabled={isPending || !snapshot}
+            aria-label="Create profile run"
           >
-            {isPending ? "Creating run…" : "Create task run"}
+            {isPending ? "Creating run…" : "Create protected profile run"}
             {!isPending && <ArrowRight data-icon="inline-end" />}
           </Button>
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+interface RangeControlProps {
+  id: string;
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  unit: string;
+  onChange: (value: number) => void;
+}
+
+function RangeControl({
+  id,
+  label,
+  value,
+  min,
+  max,
+  step,
+  unit,
+  onChange,
+}: RangeControlProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor={id}>{label}</Label>
+        <output
+          htmlFor={id}
+          className="font-mono text-xs text-muted-foreground"
+        >
+          {value} {unit}
+        </output>
+      </div>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(event.target.valueAsNumber)}
+        className="h-2 w-full cursor-pointer accent-primary"
+      />
+    </div>
   );
 }

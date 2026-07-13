@@ -1,4 +1,5 @@
 import {
+  defaultWorkstationSnapshotFields,
   type PlannerEvaluationReport,
   type RuntimeObservation,
   type TaskPlanResponse,
@@ -176,6 +177,7 @@ describe("control-plane API", () => {
       .mockResolvedValueOnce(executingRun)
       .mockResolvedValueOnce(completedRun);
     vi.mocked(station.stationSnapshot).mockResolvedValue({
+      ...defaultWorkstationSnapshotFields,
       schemaVersion: 1,
       stationId: "station-sim-1",
       stateVersion: 2,
@@ -974,6 +976,7 @@ describe("control-plane API", () => {
 
 function fakeStation(): StationClient {
   const snapshot: WorkstationSnapshot = {
+    ...defaultWorkstationSnapshotFields,
     schemaVersion: 1,
     stationId: "station-sim-1",
     stateVersion: 1,
@@ -1018,6 +1021,13 @@ function fakeStation(): StationClient {
     resumeTask: vi.fn(async () => awaitingRun),
     reconcileTask: vi.fn(async () => awaitingRun),
     stationSnapshot: vi.fn(async () => snapshot),
+    listProfiles: vi.fn(async () => ({ profiles: [] })),
+    saveProfile: vi.fn(async (profile, nowMs) => ({
+      schemaVersion: 1 as const,
+      ...profile,
+      createdAtMs: nowMs,
+      updatedAtMs: nowMs,
+    })),
   };
 }
 

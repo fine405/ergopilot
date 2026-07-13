@@ -148,6 +148,63 @@ describe("StructuredTaskPlanner", () => {
     });
   });
 
+  it("maps an ergonomic scene request to the protected four-step profile", async () => {
+    const configuration = {
+      deskHeightMm: 720,
+      chair: {
+        seatHeightMm: 465,
+        seatDepthMm: 440,
+        lumbarSupportPercent: 45,
+        armrestHeightMm: 235,
+        armrestDepthMm: 0,
+        armrestWidthMm: 470,
+        armrestAngleDeg: 5,
+        reclineAngleDeg: 135,
+        reclineResistancePercent: 20,
+        reclineLocked: true,
+        headrestHeightMm: 85,
+        headrestAngleDeg: 15,
+      },
+      light: { brightnessPercent: 25, colorTemperatureK: 2_900 },
+      reminder: { enabled: false, intervalMinutes: 45 },
+    };
+    const planner = new StructuredTaskPlanner({
+      generateDraft: async () => ({
+        action: "workstation.apply_profile",
+        configuration,
+        durationMinutes: 30,
+        interruptionPolicy: "normal",
+        assumptions: ["Desk movement area is clear"],
+      }),
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      createTaskId: () => "task-agent-nap-1",
+    });
+
+    const result = await planner.plan({
+      provider: "deepseek",
+      prompt: "切换到午休模式",
+      requestedBy: "user-1",
+    });
+
+    expect(result.task).toMatchObject({
+      goal: "restore_profile",
+      steps: [
+        { action: { type: "desk.move_to_height", input: { heightMm: 720 } } },
+        {
+          action: {
+            type: "chair.adjust_ergonomics",
+            input: configuration.chair,
+          },
+        },
+        { action: { type: "light.configure", input: configuration.light } },
+        {
+          action: { type: "reminder.configure", input: configuration.reminder },
+        },
+      ],
+    });
+  });
+
   it("rejects a model draft outside the physical safety envelope", async () => {
     const planner = new StructuredTaskPlanner({
       generateDraft: async () => ({

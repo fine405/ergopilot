@@ -7,13 +7,18 @@ import {
   plannerProvidersResponseSchema,
   type RuntimeObservation,
   runtimeObservationSchema,
+  type SaveWorkstationProfileRequest,
   type TaskPlanRequest,
   type TaskPlanResponse,
   type TaskRunView,
   type TaskSpec,
   taskPlanResponseSchema,
   taskRunViewSchema,
+  type WorkstationProfile,
+  type WorkstationProfilesResponse,
   type WorkstationSnapshot,
+  workstationProfileSchema,
+  workstationProfilesResponseSchema,
   workstationSnapshotSchema,
 } from "@ergopilot/contracts";
 import type { AppType } from "@ergopilot/control-plane";
@@ -76,6 +81,10 @@ export interface ControlPlane {
   resumeTask(runId: string): Promise<TaskRunView>;
   reconcileTask(runId: string): Promise<TaskRunView>;
   stationSnapshot(): Promise<WorkstationSnapshot>;
+  listProfiles(): Promise<WorkstationProfilesResponse>;
+  saveProfile(
+    profile: SaveWorkstationProfileRequest,
+  ): Promise<WorkstationProfile>;
   subscribeTaskRun(
     runId: string,
     onObservation: (observation: RuntimeObservation) => void,
@@ -215,6 +224,18 @@ export class HonoControlPlane implements ControlPlane {
   async stationSnapshot(): Promise<WorkstationSnapshot> {
     const response = await this.#client.api.station.snapshot.$get();
     return parseResponse(response, workstationSnapshotSchema);
+  }
+
+  async listProfiles(): Promise<WorkstationProfilesResponse> {
+    const response = await this.#client.api.profiles.$get();
+    return parseResponse(response, workstationProfilesResponseSchema);
+  }
+
+  async saveProfile(
+    profile: SaveWorkstationProfileRequest,
+  ): Promise<WorkstationProfile> {
+    const response = await this.#client.api.profiles.$post({ json: profile });
+    return parseResponse(response, workstationProfileSchema);
   }
 
   subscribeTaskRun(
@@ -379,6 +400,22 @@ export class TauriControlPlane implements ControlPlane {
         params: { observedAtMs: this.now() },
       },
       workstationSnapshotSchema,
+    );
+  }
+
+  listProfiles(): Promise<WorkstationProfilesResponse> {
+    return this.invokeStation(
+      { method: "profile.list", params: {} },
+      workstationProfilesResponseSchema,
+    );
+  }
+
+  saveProfile(
+    profile: SaveWorkstationProfileRequest,
+  ): Promise<WorkstationProfile> {
+    return this.invokeStation(
+      { method: "profile.save", params: { profile, nowMs: this.now() } },
+      workstationProfileSchema,
     );
   }
 

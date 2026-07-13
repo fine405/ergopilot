@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import type { TaskRunView, WorkstationSnapshot } from "@ergopilot/contracts";
+import {
+  defaultWorkstationSnapshotFields,
+  type TaskRunView,
+  type WorkstationSnapshot,
+} from "@ergopilot/contracts";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +15,7 @@ vi.mock("@react-three/fiber", () => ({
 }));
 
 const snapshot: WorkstationSnapshot = {
+  ...defaultWorkstationSnapshotFields,
   schemaVersion: 1,
   stationId: "station-test",
   stateVersion: 3,
