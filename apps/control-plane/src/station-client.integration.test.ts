@@ -1,6 +1,9 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import type { TaskSpec } from "@ergopilot/contracts";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +21,28 @@ afterEach(async () => {
 });
 
 describe("ProcessStationClient", () => {
+  it("rejects simulator timing that can exceed the RPC deadline", () => {
+    expect(
+      () =>
+        new ProcessStationClient({
+          binaryPath: "station-cli",
+          databasePath: "station.sqlite",
+          policyKey: "ergopilot-test-policy-key",
+          motionStepMs: 500,
+        }),
+    ).toThrow("motionStepMs must be between 0 and 400");
+    expect(
+      () =>
+        new ProcessStationClient({
+          binaryPath: "station-cli",
+          databasePath: "station.sqlite",
+          policyKey: "ergopilot-test-policy-key",
+          motionStepMs: 100,
+          timeoutMs: 1_500,
+        }),
+    ).toThrow("timeoutMs must exceed the simulated motion duration by 500 ms");
+  });
+
   it("returns a stable code when a task run does not exist", async () => {
     const directory = await mkdtemp(join(tmpdir(), "ergopilot-missing-run-"));
     temporaryDirectories.push(directory);
@@ -147,6 +172,92 @@ describe("ProcessStationClient", () => {
     expect(completed.status).toBe("completed");
     expect(snapshot.deskHeightMm).toBe(790);
     expect(snapshot.movementCount).toBe(1);
+  });
+
+  it("recovers a killed partial motion and permits the next command", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "ergopilot-partial-motion-"),
+    );
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const binaryPath = `${workspaceRoot}/target/debug/station-cli`;
+    const databasePath = `${directory}/station.sqlite`;
+    const policyKey = "ergopilot-test-policy-key";
+    const client = new ProcessStationClient({
+      binaryPath,
+      databasePath,
+      policyKey,
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-partial-motion",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 820 },
+          },
+        },
+      ],
+    };
+    const awaiting = await client.startTask(task, 1_000);
+    const approvalProcess = spawn(binaryPath, ["--rpc", databasePath], {
+      env: {
+        ...process.env,
+        ERGOPILOT_POLICY_KEY: policyKey,
+        ERGOPILOT_SIM_MOTION_STEP_MS: "100",
+      },
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    const processClosed = once(approvalProcess, "close");
+    approvalProcess.stdin.end(
+      JSON.stringify({
+        method: "task.approve",
+        params: {
+          runId: awaiting.runId,
+          approvedBy: "user-1",
+          nowMs: 1_100,
+        },
+      }),
+    );
+
+    let interruptedProgress = 0;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await delay(40);
+      const current = await client.inspectTask(awaiting.runId);
+      interruptedProgress =
+        current.deskMotionProgress.at(-1)?.progressPercent ?? 0;
+      if (interruptedProgress >= 20 && interruptedProgress < 100) {
+        approvalProcess.kill("SIGKILL");
+        break;
+      }
+    }
+    await processClosed;
+
+    expect(interruptedProgress).toBeGreaterThanOrEqual(20);
+    expect(interruptedProgress).toBeLessThan(100);
+    const reconciled = await client.reconcileTask(awaiting.runId, 1_500);
+    expect(reconciled.status).toBe("outcome_unknown");
+
+    const recoveryAwaiting = await client.startTask(
+      { ...task, taskId: "task-process-client-after-partial-motion" },
+      1_600,
+    );
+    const recovered = await client.approveTask(
+      recoveryAwaiting.runId,
+      "user-1",
+      1_700,
+    );
+    const snapshot = await client.stationSnapshot(1_800);
+
+    expect(recovered.status).toBe("completed");
+    expect(snapshot.deskHeightMm).toBe(820);
+    expect(snapshot.movementCount).toBe(2);
   });
 
   it("injects ACK loss and reconciles the real Rust runtime once", async () => {

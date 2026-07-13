@@ -285,6 +285,67 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
+  it("accepts ordered desk motion progress from the station runtime", () => {
+    const progress = [
+      {
+        sequence: 1,
+        commandId: "command-run-task-web-1",
+        progressPercent: 0,
+        deskHeightMm: 720,
+        atMs: 1_100,
+      },
+      {
+        sequence: 2,
+        commandId: "command-run-task-web-1",
+        progressPercent: 100,
+        deskHeightMm: 780,
+        atMs: 2_000,
+      },
+    ];
+
+    const parsed = taskRunViewSchema.parse({
+      runId: "run-task-web-progress",
+      taskId: "task-web-progress",
+      task: {
+        schemaVersion: 1,
+        taskId: "task-web-progress",
+        goal: "prepare_focus_session",
+        requestedBy: "user-1",
+        constraints: {},
+        assumptions: [],
+        steps: [
+          {
+            stepId: "desk-1",
+            action: {
+              type: "desk.move_to_height",
+              input: { heightMm: 780 },
+            },
+          },
+        ],
+      },
+      status: "completed",
+      suspensionReason: null,
+      approval: null,
+      command: null,
+      commandEvents: [],
+      deskMotionProgress: progress,
+      events: [],
+      policyDecision: {
+        outcome: "require_approval",
+        ruleIds: ["desk.motion.requires_approval"],
+        reasonCode: null,
+      },
+    });
+
+    expect(parsed.deskMotionProgress).toEqual(progress);
+    expect(
+      taskRunViewSchema.safeParse({
+        ...parsed,
+        deskMotionProgress: [progress[1], progress[0]],
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts dedicated recovery and cancellation events", () => {
     expect(
       taskEventSchema.parse({
@@ -341,6 +402,7 @@ describe("TaskRunView contract", () => {
       },
       command: null,
       commandEvents: [],
+      deskMotionProgress: [],
       events: [
         { sequence: 1, eventType: "run_started", atMs: 1_000 },
         { sequence: 2, eventType: "approval_required", atMs: 1_000 },

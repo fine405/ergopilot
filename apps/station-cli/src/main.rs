@@ -5,6 +5,7 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
 };
 
 fn main() -> ExitCode {
@@ -68,7 +69,24 @@ fn run_rpc_mode(database: &Path) -> ExitCode {
         }
         let request =
             serde_json::from_str(&input).map_err(station_cli::DemoError::InvalidRpcRequest)?;
-        station_cli::run_rpc(database, authority, request, &mut io::stdout())
+        let motion_step_ms = env::var("ERGOPILOT_SIM_MOTION_STEP_MS")
+            .unwrap_or_else(|_| "0".into())
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value <= 400)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "ERGOPILOT_SIM_MOTION_STEP_MS must be between 0 and 400",
+                )
+            })?;
+        station_cli::run_rpc_with_motion_step_delay(
+            database,
+            authority,
+            request,
+            &mut io::stdout(),
+            Duration::from_millis(motion_step_ms),
+        )
     })();
 
     match result {

@@ -50,6 +50,7 @@ const awaitingRun: TaskRunView = {
   },
   command: null,
   commandEvents: [],
+  deskMotionProgress: [],
   events: [
     { sequence: 1, eventType: "run_started", atMs: 1_000 },
     { sequence: 2, eventType: "approval_required", atMs: 1_000 },
@@ -59,6 +60,26 @@ const awaitingRun: TaskRunView = {
     ruleIds: ["desk.motion.requires_approval"],
     reasonCode: null,
   },
+};
+
+const executingRun: TaskRunView = {
+  ...awaitingRun,
+  status: "executing",
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    status: "approved",
+    approvedBy: "user-1",
+    approvedAtMs: 1_100,
+  },
+  deskMotionProgress: [
+    {
+      sequence: 5,
+      commandId: "command-run-awaiting-approval",
+      progressPercent: 40,
+      deskHeightMm: 748,
+      atMs: 1_500,
+    },
+  ],
 };
 
 afterEach(cleanup);
@@ -78,5 +99,25 @@ describe("WorkstationTwinCard", () => {
     expect(screen.getByText("Preview 790 mm")).toBeTruthy();
     expect(screen.getByText("Awaiting approval")).toBeTruthy();
     expect(await screen.findByTestId("workstation-scene")).toBeTruthy();
+  });
+
+  it("renders Rust-observed motion instead of an approval preview", () => {
+    render(
+      <WorkstationTwinCard
+        snapshot={{ ...snapshot, deskHeightMm: 748 }}
+        run={executingRun}
+        isLoading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByText("Observed desk height")).toBeTruthy();
+    expect(screen.getByText("40% · 748 mm")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("progressbar", { name: "Desk motion progress" })
+        .getAttribute("aria-valuenow"),
+    ).toBe("40");
+    expect(screen.queryByText("Preview 790 mm")).toBeNull();
   });
 });

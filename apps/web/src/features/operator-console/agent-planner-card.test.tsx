@@ -83,6 +83,7 @@ const awaitingRun: TaskRunView = {
   },
   command: null,
   commandEvents: [],
+  deskMotionProgress: [],
   events: [
     { sequence: 1, eventType: "run_started", atMs: 1_000 },
     { sequence: 2, eventType: "approval_required", atMs: 1_000 },
@@ -103,6 +104,20 @@ const completedRun: TaskRunView = {
     approvedBy: "demo-user",
     approvedAtMs: 2_000,
   },
+};
+
+const executingRun: TaskRunView = {
+  ...awaitingRun,
+  status: "executing",
+  deskMotionProgress: [
+    {
+      sequence: 4,
+      commandId: "command-run-agent-chat-1",
+      progressPercent: 30,
+      deskHeightMm: 741,
+      atMs: 1_400,
+    },
+  ],
 };
 
 const defaultProps = {
@@ -277,5 +292,18 @@ describe("AgentPlannerCard", () => {
           node.textContent === "Approved and verified at 790 mm.",
       ),
     ).toBeTruthy();
+  });
+
+  it("shows streamed Rust progress while the approved command executes", async () => {
+    const view = renderPlanner();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Create protected run" }),
+    );
+    view.rerender(<AgentPlannerCard {...defaultProps} run={executingRun} />);
+
+    expect(await screen.findByText("Desk motion executing")).toBeTruthy();
+    expect(screen.getByText("30% · 741 mm")).toBeTruthy();
   });
 });

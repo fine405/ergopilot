@@ -222,6 +222,16 @@ export const commandEventSchema = z
   })
   .strict();
 
+export const deskMotionProgressSchema = z
+  .object({
+    sequence: z.number().int().positive(),
+    commandId: identifierSchema,
+    progressPercent: z.number().int().min(0).max(100),
+    deskHeightMm: z.number().int().min(0).max(65_535),
+    atMs: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const taskEventSchema = z
   .object({
     sequence: z.number().int().positive(),
@@ -270,11 +280,28 @@ export const taskRunViewSchema = z
     approval: approvalViewSchema.nullable(),
     command: commandViewSchema.nullable(),
     commandEvents: z.array(commandEventSchema),
+    deskMotionProgress: z.array(deskMotionProgressSchema).max(101),
     events: z.array(taskEventSchema),
     policyDecision: policyDecisionSchema,
   })
   .strict()
   .superRefine((run, context) => {
+    for (let index = 1; index < run.deskMotionProgress.length; index += 1) {
+      const previous = run.deskMotionProgress[index - 1];
+      const current = run.deskMotionProgress[index];
+      if (
+        previous &&
+        current &&
+        (current.sequence <= previous.sequence ||
+          current.progressPercent <= previous.progressPercent)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["deskMotionProgress", index],
+          message: "desk motion progress must be strictly ordered",
+        });
+      }
+    }
     if (run.status !== "suspended" && run.suspensionReason !== null) {
       context.addIssue({
         code: "custom",
@@ -304,6 +331,13 @@ export const taskRunViewSchema = z
           message: "cancelled runs must not have command events",
         });
       }
+      if (run.deskMotionProgress.length > 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["deskMotionProgress"],
+          message: "cancelled runs must not have motion progress",
+        });
+      }
       if (run.events.at(-1)?.eventType !== "run_cancelled") {
         context.addIssue({
           code: "custom",
@@ -322,6 +356,13 @@ export const workstationSnapshotSchema = z
     observedAtMs: z.number().int().nonnegative(),
     deskHeightMm: z.number().int().nonnegative(),
     movementCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const runtimeObservationSchema = z
+  .object({
+    run: taskRunViewSchema,
+    station: workstationSnapshotSchema,
   })
   .strict();
 
@@ -352,6 +393,8 @@ export type TaskPlanRequest = z.infer<typeof taskPlanRequestSchema>;
 export type TaskPlanResponse = z.infer<typeof taskPlanResponseSchema>;
 export type TaskSpec = z.infer<typeof taskSpecSchema>;
 export type TaskRunView = z.infer<typeof taskRunViewSchema>;
+export type DeskMotionProgress = z.infer<typeof deskMotionProgressSchema>;
 export type WorkstationSnapshot = z.infer<typeof workstationSnapshotSchema>;
+export type RuntimeObservation = z.infer<typeof runtimeObservationSchema>;
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
 export type CancellationRequest = z.infer<typeof cancellationRequestSchema>;

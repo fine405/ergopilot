@@ -37,6 +37,7 @@ const awaitingRun: TaskRunView = {
   },
   command: null,
   commandEvents: [],
+  deskMotionProgress: [],
   events: [
     { sequence: 1, eventType: "run_started", atMs: 1_000 },
     { sequence: 2, eventType: "approval_required", atMs: 1_000 },
@@ -108,9 +109,44 @@ const cancelledRun: TaskRunView = {
   ],
 };
 
+const executingRun: TaskRunView = {
+  ...awaitingRun,
+  status: "executing",
+  deskMotionProgress: [
+    {
+      sequence: 7,
+      commandId: "command-run-web-ack-loss",
+      progressPercent: 60,
+      deskHeightMm: 762,
+      atMs: 1_700,
+    },
+  ],
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
+  it("shows durable Rust motion progress", () => {
+    render(
+      <RunOverview
+        run={executingRun}
+        isLoading={false}
+        error={null}
+        isMutating
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("60% · 762 mm")).toBeTruthy();
+    expect(screen.getByText("Rust device progress")).toBeTruthy();
+  });
+
   it("offers an explicit demo action for approving with ACK loss", () => {
     const onApproveWithAckLoss = vi.fn();
 

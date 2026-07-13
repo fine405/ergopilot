@@ -3,6 +3,8 @@ import {
   type PlannerProvidersResponse,
   plannerAttemptsResponseSchema,
   plannerProvidersResponseSchema,
+  type RuntimeObservation,
+  runtimeObservationSchema,
   type TaskPlanRequest,
   type TaskPlanResponse,
   type TaskRunView,
@@ -53,13 +55,20 @@ export interface ControlPlane {
   resumeTask(runId: string): Promise<TaskRunView>;
   reconcileTask(runId: string): Promise<TaskRunView>;
   stationSnapshot(): Promise<WorkstationSnapshot>;
+  subscribeTaskRun(
+    runId: string,
+    onObservation: (observation: RuntimeObservation) => void,
+    onError?: () => void,
+  ): () => void;
 }
 
 export class HonoControlPlane implements ControlPlane {
+  readonly #baseUrl: string;
   readonly #client;
 
   constructor(baseUrl: string) {
-    this.#client = hc<AppType>(baseUrl);
+    this.#baseUrl = baseUrl.replace(/\/$/, "");
+    this.#client = hc<AppType>(this.#baseUrl);
   }
 
   async plannerAttempts(): Promise<PlannerAttemptsResponse> {
@@ -167,6 +176,38 @@ export class HonoControlPlane implements ControlPlane {
   async stationSnapshot(): Promise<WorkstationSnapshot> {
     const response = await this.#client.api.station.snapshot.$get();
     return parseResponse(response, workstationSnapshotSchema);
+  }
+
+  subscribeTaskRun(
+    runId: string,
+    onObservation: (observation: RuntimeObservation) => void,
+    onError: () => void = () => undefined,
+  ) {
+    if (typeof EventSource === "undefined") {
+      onError();
+      return () => undefined;
+    }
+
+    const source = new EventSource(
+      `${this.#baseUrl}/api/task-runs/${encodeURIComponent(runId)}/stream`,
+    );
+    source.addEventListener("observation", (event) => {
+      const message = event as MessageEvent<string>;
+      const observation = parseRuntimeObservation(message.data);
+      if (observation) onObservation(observation);
+      else onError();
+    });
+    source.addEventListener("error", onError);
+    return () => source.close();
+  }
+}
+
+function parseRuntimeObservation(data: string) {
+  try {
+    const result = runtimeObservationSchema.safeParse(JSON.parse(data));
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
   }
 }
 

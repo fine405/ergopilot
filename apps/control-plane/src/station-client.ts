@@ -114,6 +114,7 @@ export interface ProcessStationClientOptions {
   binaryPath: string;
   databasePath: string;
   policyKey: string;
+  motionStepMs?: number;
   timeoutMs?: number;
 }
 
@@ -121,7 +122,24 @@ export class ProcessStationClient implements StationClient {
   readonly #options: Required<ProcessStationClientOptions>;
 
   constructor(options: ProcessStationClientOptions) {
-    this.#options = { timeoutMs: 5_000, ...options };
+    const motionStepMs = options.motionStepMs ?? 0;
+    const timeoutMs = options.timeoutMs ?? 5_000;
+    if (
+      !Number.isSafeInteger(motionStepMs) ||
+      motionStepMs < 0 ||
+      motionStepMs > 400
+    ) {
+      throw new Error("motionStepMs must be between 0 and 400");
+    }
+    if (
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs <= motionStepMs * 10 + 500
+    ) {
+      throw new Error(
+        "timeoutMs must exceed the simulated motion duration by 500 ms",
+      );
+    }
+    this.#options = { ...options, motionStepMs, timeoutMs };
   }
 
   startTask(task: TaskSpec, nowMs: number): Promise<TaskRunView> {
@@ -224,10 +242,15 @@ export class ProcessStationClient implements StationClient {
   }
 
   #invoke<T>(request: RpcRequest, resultSchema: z.ZodType<T>): Promise<T> {
-    const { binaryPath, databasePath, policyKey, timeoutMs } = this.#options;
+    const { binaryPath, databasePath, motionStepMs, policyKey, timeoutMs } =
+      this.#options;
     return new Promise((resolve, reject) => {
       const child = spawn(binaryPath, ["--rpc", databasePath], {
-        env: { ...process.env, ERGOPILOT_POLICY_KEY: policyKey },
+        env: {
+          ...process.env,
+          ERGOPILOT_POLICY_KEY: policyKey,
+          ERGOPILOT_SIM_MOTION_STEP_MS: String(motionStepMs),
+        },
         stdio: ["pipe", "pipe", "pipe"],
       });
       const stdout: Buffer[] = [];
@@ -334,5 +357,16 @@ export function createProcessStationClient(
         "target/ergopilot-control-plane.sqlite",
     ),
     policyKey: policyKey ?? "ergopilot-local-development-key",
+    motionStepMs: parseMotionStepMs(
+      environment.ERGOPILOT_SIM_MOTION_STEP_MS ?? "100",
+    ),
   });
+}
+
+function parseMotionStepMs(value: string) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 400) {
+    throw new Error("ERGOPILOT_SIM_MOTION_STEP_MS must be between 0 and 400");
+  }
+  return parsed;
 }

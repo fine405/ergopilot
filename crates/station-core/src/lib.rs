@@ -1,10 +1,10 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandEventType, CommandStatus, CommandView, DeviceAction, DeviceCommand,
-    PolicyGrant, VerifiedOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandEvent, CommandEventType, CommandStatus, CommandView, DeskMotionProgress, DeviceAction,
+    DeviceCommand, PolicyGrant, VerifiedOutcome, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{PolicyError, PolicyVerifier};
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::Path;
+use std::{path::Path, time::Duration};
 use thiserror::Error;
 
 pub use ergopilot_protocol::{MAX_DESK_HEIGHT_MM, MIN_DESK_HEIGHT_MM};
@@ -60,6 +60,28 @@ pub trait DeviceAdapter {
         action: &DeviceAction,
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError>;
+
+    fn apply_command(
+        &mut self,
+        command: &DeviceCommand,
+        started_at_ms: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        let _ = started_at_ms;
+        self.apply(&command.action, command.expected_state_version)
+    }
+
+    fn desk_motion_progress(
+        &self,
+        command_id: &str,
+    ) -> Result<Vec<DeskMotionProgress>, DeviceError> {
+        let _ = command_id;
+        Ok(Vec::new())
+    }
+
+    fn prepare_reconciliation(&mut self, command_id: &str) -> Result<(), DeviceError> {
+        let _ = command_id;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -121,6 +143,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         device: D,
         policy_verifier: PolicyVerifier,
     ) -> Result<Self, RuntimeError> {
+        connection.busy_timeout(Duration::from_secs(2))?;
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS commands (
@@ -285,10 +308,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
 
         self.persist_started(&command, &command_json, now_ms)?;
 
-        let execution = match self
-            .device
-            .apply(&command.action, command.expected_state_version)
-        {
+        let execution = match self.device.apply_command(&command, now_ms) {
             Ok(execution) => execution,
             Err(error) => {
                 self.transition_with_event(
@@ -398,6 +418,13 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             .collect()
     }
 
+    pub fn desk_motion_progress(
+        &self,
+        command_id: &str,
+    ) -> Result<Vec<DeskMotionProgress>, RuntimeError> {
+        Ok(self.device.desk_motion_progress(command_id)?)
+    }
+
     pub fn reconcile_pending(&mut self, now_ms: u64) -> Result<Vec<CommandView>, RuntimeError> {
         let pending = {
             let mut statement = self.connection.prepare(
@@ -460,6 +487,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         now_ms: u64,
     ) -> Result<CommandView, RuntimeError> {
         let command: DeviceCommand = serde_json::from_str(&command_json)?;
+        self.device.prepare_reconciliation(&command_id)?;
         let observed = self.device.snapshot(now_ms)?;
 
         if observed.desk_height_mm == command.action.target_height_mm() {

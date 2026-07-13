@@ -1,4 +1,5 @@
 import type {
+  RuntimeObservation,
   TaskPlanResponse,
   TaskRunView,
   TaskSpec,
@@ -47,6 +48,7 @@ const awaitingRun: TaskRunView = {
   },
   command: null,
   commandEvents: [],
+  deskMotionProgress: [],
   events: [
     { sequence: 1, eventType: "run_started", atMs: 1_000 },
     { sequence: 2, eventType: "approval_required", atMs: 1_000 },
@@ -86,6 +88,64 @@ const plannedTask: TaskPlanResponse = {
 };
 
 describe("control-plane API", () => {
+  it("streams validated task and station observations", async () => {
+    const station = fakeStation();
+    const executingRun: TaskRunView = {
+      ...awaitingRun,
+      status: "executing",
+      deskMotionProgress: [
+        {
+          sequence: 1,
+          commandId: "command-run-task-api-1",
+          progressPercent: 50,
+          deskHeightMm: 750,
+          atMs: 1_050,
+        },
+      ],
+    };
+    const completedRun: TaskRunView = {
+      ...awaitingRun,
+      status: "completed",
+      deskMotionProgress: [
+        {
+          sequence: 1,
+          commandId: "command-run-task-api-1",
+          progressPercent: 100,
+          deskHeightMm: 780,
+          atMs: 1_100,
+        },
+      ],
+    };
+    vi.mocked(station.inspectTask)
+      .mockResolvedValueOnce(executingRun)
+      .mockResolvedValueOnce(completedRun);
+    vi.mocked(station.stationSnapshot).mockResolvedValue({
+      schemaVersion: 1,
+      stationId: "station-sim-1",
+      stateVersion: 2,
+      observedAtMs: 1_100,
+      deskHeightMm: 780,
+      movementCount: 1,
+    });
+    const app = createApp(station, { now: () => 1_100 });
+
+    const response = await app.request("/api/task-runs/run-task-api-1/stream");
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(body).toContain("event: observation");
+    expect(body).toContain('"progressPercent":100');
+    const observations = body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)) as RuntimeObservation);
+    expect(observations[0]?.station.deskHeightMm).toBe(750);
+    expect(observations.at(-1)?.station.deskHeightMm).toBe(780);
+    expect(station.inspectTask).toHaveBeenCalledWith("run-task-api-1");
+    expect(station.stationSnapshot).toHaveBeenCalledWith(1_100);
+  });
+
   it("reports configured and disabled planner providers", async () => {
     const app = createApp(fakeStation(), {
       planners: { deepseek: fakePlanner() },

@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 const examplePrompt =
   "I want to stand and focus for 45 minutes. Set the desk to 790 mm and only interrupt me for critical issues.";
@@ -574,6 +575,27 @@ function RunConfirmationMessage({
               </div>
             </ConfirmationRejected>
           </Confirmation>
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  if (run.status === "executing") {
+    const latestProgress = run.deskMotionProgress.at(-1);
+    return (
+      <Message from="assistant">
+        <MessageContent className="w-full">
+          <Alert>
+            <WandSparkles />
+            <AlertTitle>Desk motion executing</AlertTitle>
+            <AlertDescription>
+              Progress is streamed from the Rust device adapter, not inferred by
+              the model.
+            </AlertDescription>
+            {latestProgress && (
+              <MotionProgress className="mt-2" progress={latestProgress} />
+            )}
+          </Alert>
         </MessageContent>
       </Message>
     );

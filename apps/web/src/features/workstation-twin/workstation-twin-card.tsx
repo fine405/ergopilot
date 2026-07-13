@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 const WorkstationScene = lazy(() =>
   import("./workstation-scene").then((module) => ({
@@ -36,6 +37,7 @@ export function WorkstationTwinCard({
   const hydrated = useHydrated();
   const previewHeightMm = pendingPreviewHeight(run);
   const stateLabel = twinStateLabel(run);
+  const latestProgress = run?.deskMotionProgress.at(-1);
 
   return (
     <Card className="overflow-hidden">
@@ -85,29 +87,36 @@ export function WorkstationTwinCard({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
-              <div>
-                <p className="text-xs text-muted-foreground">
-                  Verified desk height
-                </p>
-                <p className="mt-1 font-mono text-lg font-semibold">
-                  {snapshot.deskHeightMm} mm
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {previewHeightMm !== undefined && (
-                  <Badge
-                    variant="outline"
-                    className="border-status-warn/40 bg-status-warn/10 text-status-warn"
-                  >
-                    Preview {previewHeightMm} mm
+            <div className="space-y-3 rounded-lg border bg-muted/30 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    {run?.status === "executing"
+                      ? "Observed desk height"
+                      : "Verified desk height"}
+                  </p>
+                  <p className="mt-1 font-mono text-lg font-semibold">
+                    {snapshot.deskHeightMm} mm
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {previewHeightMm !== undefined && (
+                    <Badge
+                      variant="outline"
+                      className="border-status-warn/40 bg-status-warn/10 text-status-warn"
+                    >
+                      Preview {previewHeightMm} mm
+                    </Badge>
+                  )}
+                  <Badge variant="secondary">{stateLabel}</Badge>
+                  <Badge variant="outline" className="font-mono">
+                    state v{snapshot.stateVersion}
                   </Badge>
-                )}
-                <Badge variant="secondary">{stateLabel}</Badge>
-                <Badge variant="outline" className="font-mono">
-                  state v{snapshot.stateVersion}
-                </Badge>
+                </div>
               </div>
+              {latestProgress && run?.status === "executing" && (
+                <MotionProgress progress={latestProgress} />
+              )}
             </div>
           </div>
         ) : null}

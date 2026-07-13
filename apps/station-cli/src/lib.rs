@@ -11,6 +11,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 use task_runtime::{TaskRunStatus, TaskRunView, TaskRuntime, TaskRuntimeError, TaskSpec};
 use thiserror::Error;
@@ -180,6 +181,16 @@ pub fn run_rpc(
     request: RpcRequest,
     output: &mut impl Write,
 ) -> Result<(), DemoError> {
+    run_rpc_with_motion_step_delay(database_path, authority, request, output, Duration::ZERO)
+}
+
+pub fn run_rpc_with_motion_step_delay(
+    database_path: impl AsRef<Path>,
+    authority: PolicyAuthority,
+    request: RpcRequest,
+    output: &mut impl Write,
+    motion_step_delay: Duration,
+) -> Result<(), DemoError> {
     let database_path = database_path.as_ref();
     if let Some(parent) = database_path
         .parent()
@@ -187,7 +198,8 @@ pub fn run_rpc(
     {
         fs::create_dir_all(parent)?;
     }
-    let mut simulator = SqliteSimulator::open(database_path)?;
+    let mut simulator =
+        SqliteSimulator::open(database_path)?.with_motion_step_delay(motion_step_delay);
     match &request {
         RpcRequest::DemoApproveTaskWithAckLoss { .. } => {
             simulator.set_next_fault(NextFault::LoseReportAfterEffect);

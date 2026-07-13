@@ -84,6 +84,16 @@ pub struct WorkstationSnapshot {
     pub movement_count: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeskMotionProgress {
+    pub sequence: u64,
+    pub command_id: String,
+    pub progress_percent: u8,
+    pub desk_height_mm: u16,
+    pub at_ms: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandStatus {

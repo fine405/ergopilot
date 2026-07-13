@@ -47,6 +47,43 @@ fn approval_resumes_the_same_run_and_completes_the_device_action() {
     assert_eq!(snapshot.movement_count, 1);
 }
 
+#[test]
+fn desk_motion_progress_is_ordered_and_survives_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let awaiting = runtime
+        .start(
+            TaskSpec::prepare_focus_session("task-focus-progress", "user-1", 820),
+            1_000,
+        )
+        .unwrap();
+
+    let completed = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+
+    assert_eq!(completed.desk_motion_progress.len(), 11);
+    assert_eq!(completed.desk_motion_progress[0].progress_percent, 0);
+    assert_eq!(completed.desk_motion_progress[0].desk_height_mm, 720);
+    assert_eq!(completed.desk_motion_progress[10].progress_percent, 100);
+    assert_eq!(completed.desk_motion_progress[10].desk_height_mm, 820);
+    assert!(completed
+        .desk_motion_progress
+        .windows(2)
+        .all(|events| events[0].sequence < events[1].sequence
+            && events[0].progress_percent < events[1].progress_percent));
+    drop(runtime);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let restarted = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let restored = restarted.inspect(&awaiting.run_id).unwrap();
+
+    assert_eq!(
+        restored.desk_motion_progress,
+        completed.desk_motion_progress
+    );
+}
+
 fn policy_authority() -> PolicyAuthority {
     PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap()
 }

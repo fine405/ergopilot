@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 import { RunTimeline } from "./run-timeline";
 import { StatusBadge } from "./status-badge";
@@ -104,6 +105,7 @@ export function RunOverview({
   const canReconcile = run.status === "outcome_unknown";
   const canResume =
     run.status === "suspended" && run.suspensionReason === "device_unavailable";
+  const latestProgress = run.deskMotionProgress.at(-1);
 
   return (
     <div className="space-y-6">
@@ -160,6 +162,12 @@ export function RunOverview({
               ))}
             </div>
           </div>
+
+          {latestProgress && (
+            <div className="rounded-xl border bg-muted/20 p-4">
+              <MotionProgress progress={latestProgress} />
+            </div>
+          )}
 
           {approvalPending && run.approval && (
             <div className="flex flex-col gap-4 rounded-xl border border-status-warn/30 bg-status-warn/5 p-4 sm:flex-row sm:items-center sm:justify-between">

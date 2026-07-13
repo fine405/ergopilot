@@ -1,12 +1,12 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyDecision,
-    PolicyGrant, PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandEvent, CommandStatus, CommandView, DeskMotionProgress, DeviceAction, DeviceCommand,
+    PolicyDecision, PolicyGrant, PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use station_core::{DeviceAdapter, DeviceErrorKind, RuntimeError, StationRuntime};
-use std::path::Path;
+use std::{path::Path, time::Duration};
 use thiserror::Error;
 
 const MAX_RECOVERY_ATTEMPTS: usize = 3;
@@ -178,6 +178,8 @@ pub struct TaskRunView {
     pub command: Option<CommandView>,
     #[serde(default)]
     pub command_events: Vec<CommandEvent>,
+    #[serde(default)]
+    pub desk_motion_progress: Vec<DeskMotionProgress>,
     pub events: Vec<TaskEvent>,
     pub policy_decision: PolicyDecision,
 }
@@ -246,6 +248,7 @@ enum ContinuationUpdate {
         event_type: TaskEventType,
         command: CommandView,
         command_events: Vec<CommandEvent>,
+        desk_motion_progress: Vec<DeskMotionProgress>,
     },
 }
 
@@ -257,6 +260,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     ) -> Result<Self, TaskRuntimeError> {
         let path = path.as_ref();
         let connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(2))?;
         connection.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS task_runs (
@@ -320,6 +324,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             approval,
             command: None,
             command_events: Vec::new(),
+            desk_motion_progress: Vec::new(),
             events: vec![
                 TaskEvent {
                     sequence: 1,
@@ -347,7 +352,9 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     }
 
     pub fn inspect(&self, run_id: &str) -> Result<TaskRunView, TaskRuntimeError> {
-        Ok(self.load_run(run_id)?.view)
+        let mut stored = self.load_run(run_id)?;
+        self.refresh_command_events(&mut stored)?;
+        Ok(stored.view)
     }
 
     pub fn approve(
@@ -638,6 +645,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 let (status, event_type) =
                     task_outcome(command_view.status, TaskEventType::RunResumed);
                 let command_events = self.station.events(&command.command_id)?;
+                let desk_motion_progress =
+                    self.station.desk_motion_progress(&command.command_id)?;
                 let (view, _) = self.commit_continuation_update(
                     run_id,
                     current.view.status,
@@ -647,6 +656,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                         event_type,
                         command: command_view,
                         command_events,
+                        desk_motion_progress,
                     },
                     now_ms,
                 )?;
@@ -791,6 +801,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
 
         let (status, event_type) = task_outcome(command_view.status, completed_event);
         let command_events = self.station.events(&command.command_id)?;
+        let desk_motion_progress = self.station.desk_motion_progress(&command.command_id)?;
         let (view, update_applied) = self.commit_continuation_update(
             &run_id,
             expected_status,
@@ -800,6 +811,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 event_type,
                 command: command_view,
                 command_events,
+                desk_motion_progress,
             },
             now_ms,
         )?;
@@ -844,11 +856,13 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 event_type,
                 command,
                 command_events,
+                desk_motion_progress,
             } => {
                 stored.view.status = status;
                 stored.view.suspension_reason = None;
                 stored.view.command = Some(command);
                 stored.view.command_events = command_events;
+                stored.view.desk_motion_progress = desk_motion_progress;
                 append_event_once(&mut stored.view, event_type, now_ms);
             }
         }
@@ -891,6 +905,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     fn refresh_command_events(&self, stored: &mut StoredRun) -> Result<(), TaskRuntimeError> {
         if let Some(command) = &stored.command {
             stored.view.command_events = self.station.events(&command.command_id)?;
+            stored.view.desk_motion_progress =
+                self.station.desk_motion_progress(&command.command_id)?;
         }
         Ok(())
     }

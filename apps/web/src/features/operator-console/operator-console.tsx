@@ -6,6 +6,7 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHydrated } from "@tanstack/react-router";
 import { Boxes, Radio } from "lucide-react";
+import { useEffect } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { WorkstationTwinCard } from "@/features/workstation-twin/workstation-twin-card";
@@ -33,6 +34,8 @@ export function OperatorConsole({
     queryFn: () => controlPlane.inspectTask(requireRunId(runId)),
     enabled: hydrated && Boolean(runId),
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.status === "awaiting_approval" ? 1_000 : false,
   });
   const stationQuery = useQuery({
     queryKey: ["station-snapshot"],
@@ -192,6 +195,34 @@ export function OperatorConsole({
     approveWithDeviceUnavailableBeforeDispatchMutation.isPending ||
     resumeMutation.isPending ||
     reconcileMutation.isPending;
+  const shouldObserveRun =
+    runQuery.data?.status === "executing" ||
+    approveMutation.isPending ||
+    approveWithAckLossMutation.isPending ||
+    approveWithDeviceOfflineMutation.isPending ||
+    approveWithDeviceUnavailableBeforeDispatchMutation.isPending ||
+    resumeMutation.isPending ||
+    reconcileMutation.isPending;
+
+  useEffect(() => {
+    if (!runId || !shouldObserveRun) return;
+    return controlPlane.subscribeTaskRun(
+      runId,
+      (observation) => {
+        queryClient.setQueryData(
+          ["task-run", observation.run.runId],
+          observation.run,
+        );
+        queryClient.setQueryData(["station-snapshot"], observation.station);
+      },
+      () => {
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ["task-run", runId] }),
+          queryClient.invalidateQueries({ queryKey: ["station-snapshot"] }),
+        ]);
+      },
+    );
+  }, [queryClient, runId, shouldObserveRun]);
 
   return (
     <div className="min-h-svh bg-background">

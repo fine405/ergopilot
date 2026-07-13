@@ -6,6 +6,7 @@ import {
   plannerAttemptSchema,
   plannerAttemptsResponseSchema,
   plannerProviderIdSchema,
+  runtimeObservationSchema,
   type TaskPlanRequest,
   type TaskPlanResponse,
   taskPlanRequestSchema,
@@ -16,6 +17,7 @@ import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
+import { streamSSE } from "hono/streaming";
 
 import {
   createMemoryPlannerAttemptStore,
@@ -272,6 +274,47 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     .get("/api/task-runs/:runId", async (context) =>
       context.json(await station.inspectTask(context.req.param("runId"))),
     )
+    .get("/api/task-runs/:runId/stream", async (context) => {
+      const runId = context.req.param("runId");
+      return streamSSE(context, async (stream) => {
+        for (let sample = 0; sample < 80 && !stream.aborted; sample += 1) {
+          const [run, stationSnapshot] = await Promise.all([
+            station.inspectTask(runId),
+            station.stationSnapshot(now()),
+          ]);
+          const latestProgress = run.deskMotionProgress.at(-1);
+          const observation = runtimeObservationSchema.parse({
+            run,
+            station:
+              (run.status === "executing" || run.status === "suspended") &&
+              latestProgress
+                ? {
+                    ...stationSnapshot,
+                    deskHeightMm: latestProgress.deskHeightMm,
+                  }
+                : stationSnapshot,
+          });
+          await stream.writeSSE({
+            event: "observation",
+            id: `${run.events.at(-1)?.sequence ?? 0}-${latestProgress?.sequence ?? 0}-${observation.station.stateVersion}-${observation.station.deskHeightMm}`,
+            data: JSON.stringify(observation),
+          });
+
+          if (
+            [
+              "completed",
+              "failed",
+              "cancelled",
+              "denied",
+              "outcome_unknown",
+            ].includes(run.status)
+          ) {
+            break;
+          }
+          await stream.sleep(100);
+        }
+      });
+    })
     .post(
       "/api/task-runs/:runId/approve",
       zValidator("json", approvalRequestSchema),
