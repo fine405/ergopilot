@@ -139,6 +139,61 @@ fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
 }
 
 #[test]
+fn task_run_resumes_after_device_unavailable_before_station_journal() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut first_process = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = first_process
+        .start(
+            TaskSpec::prepare_focus_session("task-unavailable-before-dispatch", "user-1", 795),
+            1_000,
+        )
+        .unwrap();
+    drop(first_process);
+
+    let mut unavailable_simulator = SqliteSimulator::open(&database).unwrap();
+    unavailable_simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+    let mut unavailable_process =
+        TaskRuntime::open(&database, unavailable_simulator, authority.clone()).unwrap();
+    let suspended = unavailable_process
+        .approve(&awaiting.run_id, "user-1", 1_100)
+        .unwrap();
+
+    assert_eq!(suspended.status, TaskRunStatus::Suspended);
+    assert!(suspended.command.is_none());
+    assert!(suspended.command_events.is_empty());
+    assert_eq!(
+        unavailable_process
+            .station_snapshot(1_150)
+            .unwrap()
+            .movement_count,
+        0
+    );
+    drop(unavailable_process);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut recovered_process = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let completed = recovered_process
+        .reconcile(&awaiting.run_id, 1_200)
+        .unwrap();
+
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert_eq!(
+        completed.events.last().unwrap().event_type.as_str(),
+        "run_reconciled"
+    );
+    assert_eq!(
+        recovered_process
+            .station_snapshot(1_250)
+            .unwrap()
+            .movement_count,
+        1
+    );
+}
+
+#[test]
 fn failed_post_effect_readback_keeps_the_task_uncertain_until_reconciliation() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");

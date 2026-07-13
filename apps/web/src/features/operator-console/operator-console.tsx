@@ -114,6 +114,24 @@ export function OperatorConsole({
       ]);
     },
   });
+  const approveWithDeviceUnavailableBeforeDispatchMutation = useMutation({
+    mutationFn: (run: TaskRunView) =>
+      controlPlane.demoApproveTaskWithDeviceUnavailableBeforeDispatch(
+        run.runId,
+        run.task.requestedBy,
+      ),
+    onSuccess: (run) => {
+      queryClient.setQueryData(["task-run", run.runId], run);
+    },
+    onSettled: async (_data, _error, run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["task-run", run.runId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["station-snapshot"] }),
+      ]);
+    },
+  });
   const reconcileMutation = useMutation({
     mutationFn: (run: TaskRunView) => controlPlane.reconcileTask(run.runId),
     onSuccess: (run) => {
@@ -134,12 +152,14 @@ export function OperatorConsole({
     errorMessage(approveMutation.error) ??
     errorMessage(approveWithAckLossMutation.error) ??
     errorMessage(approveWithDeviceOfflineMutation.error) ??
+    errorMessage(approveWithDeviceUnavailableBeforeDispatchMutation.error) ??
     errorMessage(reconcileMutation.error);
   const isMutating =
     startMutation.isPending ||
     approveMutation.isPending ||
     approveWithAckLossMutation.isPending ||
     approveWithDeviceOfflineMutation.isPending ||
+    approveWithDeviceUnavailableBeforeDispatchMutation.isPending ||
     reconcileMutation.isPending;
 
   return (
@@ -231,6 +251,9 @@ export function OperatorConsole({
             }
             onApproveWithDeviceOffline={(run) =>
               approveWithDeviceOfflineMutation.mutate(run)
+            }
+            onApproveWithDeviceUnavailableBeforeDispatch={(run) =>
+              approveWithDeviceUnavailableBeforeDispatchMutation.mutate(run)
             }
             onReconcile={(run) => reconcileMutation.mutate(run)}
           />

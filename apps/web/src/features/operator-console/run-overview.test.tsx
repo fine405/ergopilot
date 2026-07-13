@@ -47,6 +47,23 @@ const awaitingRun: TaskRunView = {
   },
 };
 
+const suspendedRun: TaskRunView = {
+  ...awaitingRun,
+  status: "suspended",
+  approval: {
+    approvalId: "approval-run-web-ack-loss",
+    expiresAtMs: 61_000,
+    status: "approved",
+    approvedBy: "user-1",
+    approvedAtMs: 2_000,
+  },
+  events: [
+    ...awaitingRun.events,
+    { sequence: 3, eventType: "approval_granted", atMs: 2_000 },
+    { sequence: 4, eventType: "run_suspended", atMs: 2_000 },
+  ],
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
@@ -62,6 +79,7 @@ describe("RunOverview", () => {
         onApprove={vi.fn()}
         onApproveWithAckLoss={onApproveWithAckLoss}
         onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -86,6 +104,7 @@ describe("RunOverview", () => {
         onApprove={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={onApproveWithDeviceOffline}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -98,5 +117,59 @@ describe("RunOverview", () => {
     );
 
     expect(onApproveWithDeviceOffline).toHaveBeenCalledWith(awaitingRun);
+  });
+
+  it("offers an explicit demo action for pre-dispatch unavailability", () => {
+    const onApproveWithDeviceUnavailableBeforeDispatch = vi.fn();
+
+    render(
+      <RunOverview
+        run={awaitingRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={
+          onApproveWithDeviceUnavailableBeforeDispatch
+        }
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review & approve" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Approve + unavailable before dispatch (demo)",
+      }),
+    );
+
+    expect(onApproveWithDeviceUnavailableBeforeDispatch).toHaveBeenCalledWith(
+      awaitingRun,
+    );
+  });
+
+  it("resumes a suspended run through reconciliation", () => {
+    const onReconcile = vi.fn();
+
+    render(
+      <RunOverview
+        run={suspendedRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onReconcile={onReconcile}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume run" }));
+
+    expect(onReconcile).toHaveBeenCalledWith(suspendedRun);
+    expect(screen.getByText("Run suspended safely")).toBeTruthy();
   });
 });

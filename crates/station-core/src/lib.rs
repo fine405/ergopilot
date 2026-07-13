@@ -15,17 +15,36 @@ pub enum DeviceExecution {
     OutcomeUnknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceErrorKind {
+    Other,
+    Unavailable,
+}
+
 #[derive(Debug, Error)]
 #[error("device adapter error: {message}")]
 pub struct DeviceError {
     pub message: String,
+    kind: DeviceErrorKind,
 }
 
 impl DeviceError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            kind: DeviceErrorKind::Other,
         }
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: DeviceErrorKind::Unavailable,
+        }
+    }
+
+    pub fn kind(&self) -> DeviceErrorKind {
+        self.kind
     }
 }
 

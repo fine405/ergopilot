@@ -214,6 +214,66 @@ fn demo_device_offline_rpc_fails_before_effect_and_a_new_run_can_complete() {
 }
 
 #[test]
+fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let task =
+        TaskSpec::prepare_focus_session("task-rpc-unavailable-before-dispatch", "user-1", 805);
+
+    let started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task,
+            now_ms: 1_000,
+        },
+    );
+    let run_id = started["result"]["runId"].as_str().unwrap();
+    let suspended = invoke(
+        &database,
+        &authority,
+        RpcRequest::DemoApproveTaskWithDeviceUnavailableBeforeDispatch {
+            run_id: run_id.into(),
+            approved_by: "user-1".into(),
+            now_ms: 1_100,
+        },
+    );
+
+    assert_eq!(suspended["result"]["status"], "suspended");
+    assert_eq!(suspended["result"]["command"], serde_json::Value::Null);
+    assert_eq!(suspended["result"]["commandEvents"], json!([]));
+    let after_suspension = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_150,
+        },
+    );
+    assert_eq!(after_suspension["result"]["movementCount"], 0);
+
+    let resumed = invoke(
+        &database,
+        &authority,
+        RpcRequest::ReconcileTask {
+            run_id: run_id.into(),
+            now_ms: 1_200,
+        },
+    );
+    assert_eq!(resumed["result"]["status"], "completed");
+
+    let final_snapshot = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_250,
+        },
+    );
+    assert_eq!(final_snapshot["result"]["deskHeightMm"], 805);
+    assert_eq!(final_snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
 fn rpc_process_rejects_input_larger_than_the_protocol_limit() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("oversized.sqlite");

@@ -673,6 +673,27 @@ describe("control-plane API", () => {
     );
     expect(station.approveTask).not.toHaveBeenCalled();
   });
+
+  it("keeps pre-dispatch unavailability behind an explicit demo route", async () => {
+    const station = fakeStation();
+    const app = createApp(station, { now: () => 1_100 });
+
+    const response = await app.request(
+      "/api/demo/task-runs/run-task-api-1/approve-with-device-unavailable-before-dispatch",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approvedBy: "user-1" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "suspended" });
+    expect(
+      station.demoApproveTaskWithDeviceUnavailableBeforeDispatch,
+    ).toHaveBeenCalledWith("run-task-api-1", "user-1", 1_100);
+    expect(station.approveTask).not.toHaveBeenCalled();
+  });
 });
 
 function fakeStation(): StationClient {
@@ -698,6 +719,10 @@ function fakeStation(): StationClient {
     demoApproveTaskWithDeviceOffline: vi.fn(async () => ({
       ...awaitingRun,
       status: "failed" as const,
+    })),
+    demoApproveTaskWithDeviceUnavailableBeforeDispatch: vi.fn(async () => ({
+      ...awaitingRun,
+      status: "suspended" as const,
     })),
     reconcileTask: vi.fn(async () => awaitingRun),
     stationSnapshot: vi.fn(async () => snapshot),

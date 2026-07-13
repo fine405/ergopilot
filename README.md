@@ -33,6 +33,8 @@ runnable end to end. The current slice implements:
   repeat a physical effect;
 - a demo-only device-offline path that fails before effect and requires a
   fresh run instead of a blind retry;
+- a structured pre-dispatch device-unavailable path that suspends safely and
+  resumes the same run only after an explicit operator action;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
 - an optional Mastra planner that converts natural language into a bounded,
@@ -78,9 +80,16 @@ then click **Reconcile state**. The run moves through `outcome_unknown` to
 `completed`, while the station movement count increases only once.
 
 To exercise a definite pre-effect failure, choose **Approve + device offline
-(demo)**. The run becomes `failed`, the timeline records `execution_failed`,
-and the movement count stays at zero. Create a fresh task run after the
-simulated device returns, then use normal approval to complete one movement.
+(demo)**. The station command has already been journaled, so the run becomes
+`failed`, the timeline records `execution_failed`, and the movement count stays
+at zero. Create a fresh task run after the simulated device returns, then use
+normal approval to complete one movement.
+
+To exercise recoverable pre-dispatch unavailability, choose **Approve +
+unavailable before dispatch (demo)**. The run becomes `suspended` before a
+station command is journaled, so the movement count remains zero. Click
+**Resume run** after connectivity is safe; the same run completes and the total
+movement count becomes one.
 
 The deterministic CLI demos remain available:
 

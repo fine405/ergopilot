@@ -279,6 +279,20 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
         return context.json(run);
       },
     )
+    .post(
+      "/api/demo/task-runs/:runId/approve-with-device-unavailable-before-dispatch",
+      zValidator("json", approvalRequestSchema),
+      async (context) => {
+        const { approvedBy } = context.req.valid("json");
+        const run =
+          await station.demoApproveTaskWithDeviceUnavailableBeforeDispatch(
+            context.req.param("runId"),
+            approvedBy,
+            now(),
+          );
+        return context.json(run);
+      },
+    )
     .post("/api/task-runs/:runId/reconcile", async (context) =>
       context.json(
         await station.reconcileTask(context.req.param("runId"), now()),

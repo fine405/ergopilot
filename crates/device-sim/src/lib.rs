@@ -14,6 +14,7 @@ pub enum SimulatorError {
 pub enum NextFault {
     #[default]
     None,
+    DeviceUnavailableBeforeDispatch,
     DeviceUnavailableBeforeEffect,
     LoseReportAfterEffect,
 }
@@ -73,6 +74,12 @@ impl SqliteSimulator {
 
 impl DeviceAdapter for SqliteSimulator {
     fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        if self.next_fault == NextFault::DeviceUnavailableBeforeDispatch {
+            self.next_fault = NextFault::None;
+            return Err(DeviceError::unavailable(
+                "simulated device unavailable before dispatch",
+            ));
+        }
         self.read_snapshot(observed_at_ms)
             .map_err(|error| DeviceError::new(error.to_string()))
     }
@@ -84,8 +91,9 @@ impl DeviceAdapter for SqliteSimulator {
     ) -> Result<DeviceExecution, DeviceError> {
         let execution = match std::mem::take(&mut self.next_fault) {
             NextFault::None => DeviceExecution::Reported,
-            NextFault::DeviceUnavailableBeforeEffect => {
-                return Err(DeviceError::new(
+            NextFault::DeviceUnavailableBeforeDispatch
+            | NextFault::DeviceUnavailableBeforeEffect => {
+                return Err(DeviceError::unavailable(
                     "simulated device unavailable before effect",
                 ));
             }

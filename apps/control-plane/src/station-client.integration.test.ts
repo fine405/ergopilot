@@ -154,4 +154,52 @@ describe("ProcessStationClient", () => {
     expect(finalSnapshot.deskHeightMm).toBe(810);
     expect(finalSnapshot.movementCount).toBe(1);
   });
+
+  it("suspends pre-dispatch unavailability and resumes the same run", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-suspended-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-suspended",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 805 },
+          },
+        },
+      ],
+    };
+
+    const awaiting = await client.startTask(task, 1_000);
+    const suspended =
+      await client.demoApproveTaskWithDeviceUnavailableBeforeDispatch(
+        awaiting.runId,
+        "user-1",
+        1_100,
+      );
+    const afterSuspension = await client.stationSnapshot(1_150);
+    const resumed = await client.reconcileTask(awaiting.runId, 1_200);
+    const finalSnapshot = await client.stationSnapshot(1_250);
+
+    expect(suspended.status).toBe("suspended");
+    expect(suspended.command).toBeNull();
+    expect(suspended.commandEvents).toEqual([]);
+    expect(afterSuspension.movementCount).toBe(0);
+    expect(resumed.runId).toBe(awaiting.runId);
+    expect(resumed.status).toBe("completed");
+    expect(finalSnapshot.deskHeightMm).toBe(805);
+    expect(finalSnapshot.movementCount).toBe(1);
+  });
 });

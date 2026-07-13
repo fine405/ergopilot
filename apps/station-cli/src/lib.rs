@@ -96,6 +96,15 @@ pub enum RpcRequest {
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
+    #[serde(rename = "demo.task.approve_with_device_unavailable_before_dispatch")]
+    DemoApproveTaskWithDeviceUnavailableBeforeDispatch {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "approvedBy")]
+        approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
     #[serde(rename = "task.reconcile")]
     ReconcileTask {
         #[serde(rename = "runId")]
@@ -131,6 +140,9 @@ pub fn run_rpc(
         RpcRequest::DemoApproveTaskWithDeviceOffline { .. } => {
             simulator.set_next_fault(NextFault::DeviceUnavailableBeforeEffect);
         }
+        RpcRequest::DemoApproveTaskWithDeviceUnavailableBeforeDispatch { .. } => {
+            simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
+        }
         _ => {}
     }
     let mut runtime = TaskRuntime::open(database_path, simulator, authority)?;
@@ -163,6 +175,11 @@ pub fn run_rpc(
             };
             serde_json::to_value(run)?
         }
+        RpcRequest::DemoApproveTaskWithDeviceUnavailableBeforeDispatch {
+            run_id,
+            approved_by,
+            now_ms,
+        } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
         RpcRequest::ReconcileTask { run_id, now_ms } => {
             serde_json::to_value(runtime.reconcile(&run_id, now_ms)?)?
         }

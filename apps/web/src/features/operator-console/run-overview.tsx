@@ -49,6 +49,7 @@ interface RunOverviewProps {
   onApprove: (run: TaskRunView) => void;
   onApproveWithAckLoss: (run: TaskRunView) => void;
   onApproveWithDeviceOffline: (run: TaskRunView) => void;
+  onApproveWithDeviceUnavailableBeforeDispatch: (run: TaskRunView) => void;
   onReconcile: (run: TaskRunView) => void;
 }
 
@@ -60,6 +61,7 @@ export function RunOverview({
   onApprove,
   onApproveWithAckLoss,
   onApproveWithDeviceOffline,
+  onApproveWithDeviceUnavailableBeforeDispatch,
   onReconcile,
 }: RunOverviewProps) {
   if (isLoading && !run) {
@@ -94,7 +96,7 @@ export function RunOverview({
   const targetHeight = run.task.steps[0].action.input.heightMm;
   const approvalPending =
     run.status === "awaiting_approval" && run.approval?.status === "pending";
-  const canReconcile = run.status === "outcome_unknown";
+  const canReconcile = ["outcome_unknown", "suspended"].includes(run.status);
 
   return (
     <div className="space-y-6">
@@ -119,7 +121,7 @@ export function RunOverview({
                 <RefreshCw
                   className={isMutating ? "animate-spin" : undefined}
                 />
-                Reconcile state
+                {run.status === "suspended" ? "Resume run" : "Reconcile state"}
               </Button>
             )}
           </div>
@@ -207,6 +209,15 @@ export function RunOverview({
                       >
                         Approve + device offline (demo)
                       </AlertDialogAction>
+                      <AlertDialogAction
+                        variant="destructive"
+                        onClick={() =>
+                          onApproveWithDeviceUnavailableBeforeDispatch(run)
+                        }
+                        className="sm:col-span-2"
+                      >
+                        Approve + unavailable before dispatch (demo)
+                      </AlertDialogAction>
                     </div>
                   </div>
                   <AlertDialogFooter>
@@ -282,6 +293,19 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
       </Alert>
     );
   }
+  if (run.status === "suspended") {
+    return (
+      <Alert className="border-status-warn/30 bg-status-warn/5">
+        <TriangleAlert className="text-status-warn" />
+        <AlertTitle>Run suspended safely</AlertTitle>
+        <AlertDescription>
+          The runtime stopped before recording a terminal device outcome. Resume
+          re-checks connectivity, approval, and station state; invalid
+          preconditions remain suspended.
+        </AlertDescription>
+      </Alert>
+    );
+  }
   if (
     run.status === "failed" &&
     run.commandEvents.some((event) => event.eventType === "execution_failed")
@@ -297,7 +321,7 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
       </Alert>
     );
   }
-  if (["failed", "denied", "suspended"].includes(run.status)) {
+  if (["failed", "denied"].includes(run.status)) {
     return (
       <Alert variant="destructive">
         <TriangleAlert />

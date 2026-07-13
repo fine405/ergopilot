@@ -5,7 +5,7 @@ use ergopilot_protocol::{
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use station_core::{DeviceAdapter, RuntimeError, StationRuntime};
+use station_core::{DeviceAdapter, DeviceErrorKind, RuntimeError, StationRuntime};
 use std::path::Path;
 use thiserror::Error;
 
@@ -397,9 +397,19 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 return Ok(stored.view);
             }
             Err(error @ RuntimeError::Device(_)) => {
+                let unavailable = matches!(
+                    &error,
+                    RuntimeError::Device(device_error)
+                        if device_error.kind() == DeviceErrorKind::Unavailable
+                );
                 if let Some(command_view) = self.station.inspect_command(&command)? {
                     device_error = Some(error);
                     command_view
+                } else if unavailable {
+                    stored.view.status = TaskRunStatus::Suspended;
+                    append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                    self.save_run(&stored, now_ms)?;
+                    return Ok(stored.view);
                 } else {
                     stored.view.status = TaskRunStatus::Failed;
                     append_event(&mut stored.view, TaskEventType::RunFailed, now_ms);
@@ -444,10 +454,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         let mut stored = self.load_run(run_id)?;
         if matches!(
             stored.view.status,
-            TaskRunStatus::Completed
-                | TaskRunStatus::Failed
-                | TaskRunStatus::Denied
-                | TaskRunStatus::Suspended
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
         ) {
             return Ok(stored.view);
         }
@@ -473,9 +480,19 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 return Ok(stored.view);
             }
             Err(error @ RuntimeError::Device(_)) => {
+                let unavailable = matches!(
+                    &error,
+                    RuntimeError::Device(device_error)
+                        if device_error.kind() == DeviceErrorKind::Unavailable
+                );
                 if let Some(command_view) = self.station.inspect_command(&command)? {
                     device_error = Some(error);
                     command_view
+                } else if unavailable {
+                    stored.view.status = TaskRunStatus::Suspended;
+                    append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                    self.save_run(&stored, now_ms)?;
+                    return Ok(stored.view);
                 } else {
                     return Err(error.into());
                 }
