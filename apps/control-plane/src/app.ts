@@ -11,6 +11,7 @@ import {
   type TaskPlanResponse,
   taskPlanRequestSchema,
   taskSpecSchema,
+  workstationCapabilityCatalog,
 } from "@ergopilot/contracts";
 import { type Hook, zValidator } from "@hono/zod-validator";
 import { type Context, Hono } from "hono";
@@ -195,6 +196,9 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
     )
     .get("/api/health", (context) =>
       context.json({ status: "ok", stationAdapter: "process" as const }),
+    )
+    .get("/api/capabilities", (context) =>
+      context.json(workstationCapabilityCatalog),
     )
     .get("/api/planner-providers", (context) =>
       context.json(describePlannerProviders(options.planners ?? {})),

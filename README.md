@@ -49,6 +49,10 @@ runnable end to end. The current slice implements:
 - an optional Mastra planner that converts natural language into a bounded,
   server-validated `TaskSpec` without receiving execution authority;
 - server-owned timestamps and schema validation at the API boundary;
+- a versioned capability catalog shared by the control plane and a local MCP
+  server;
+- permission-bounded MCP tools that can query state, inspect runs and create a
+  pending proposal, but cannot approve or directly execute physical motion;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
 - URL-persisted run selection, so an in-progress approval survives refresh.
@@ -135,6 +139,20 @@ pnpm eval:planner deepseek full
 See the measured methodology, results and limitations in
 [`docs/PLANNER_EVALUATION.md`](docs/PLANNER_EVALUATION.md).
 
+The local stdio MCP server expects the control plane to be running. It exposes
+`workstation.list_capabilities`, `workstation.get_state`,
+`workstation.propose_desk_motion` and `workstation.inspect_run`. Start it with
+stdout reserved for MCP protocol traffic:
+
+```bash
+ERGOPILOT_CONTROL_PLANE_URL=http://localhost:8787 \
+  pnpm --silent --filter @ergopilot/mcp-server start
+```
+
+When configuring an MCP client, use the repository root as its working
+directory and the same command/arguments. Approval remains available only in
+the trusted operator UI; the MCP server intentionally has no approval tool.
+
 Run all verification gates:
 
 ```bash
@@ -174,6 +192,7 @@ receive authority over policy or device execution.
 - `packages/contracts`: shared Zod schemas and TypeScript types;
 - `apps/control-plane`: Hono routes, Mastra planner and bounded Rust process
   adapter;
+- `apps/mcp-server`: stdio MCP tools over the existing control-plane contract;
 - `apps/web`: TanStack Start operator console;
 - `apps/station-cli`: JSON RPC boundary and executable recovery demos;
 - `crates/ergopilot-protocol`: versioned Rust command and event types;

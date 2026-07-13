@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 export const schemaVersion = 1 as const;
+export const minimumDeskHeightMm = 620 as const;
+export const maximumDeskHeightMm = 1_280 as const;
+export const safeDeskHeightMmSchema = z
+  .number()
+  .int()
+  .min(minimumDeskHeightMm)
+  .max(maximumDeskHeightMm);
 
 const identifierSchema = z
   .string()
@@ -10,6 +17,91 @@ const identifierSchema = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 const actorIdSchema = z.string().trim().min(1).max(128);
 const assumptionSchema = z.string().trim().min(1).max(256);
+
+const numericCapabilityInputSchema = z
+  .object({
+    type: z.literal("object"),
+    additionalProperties: z.literal(false),
+    required: z.array(identifierSchema).min(1),
+    properties: z.record(
+      identifierSchema,
+      z
+        .object({
+          type: z.literal("integer"),
+          minimum: z.number().int(),
+          maximum: z.number().int(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
+export const capabilityDescriptorSchema = z
+  .object({
+    schemaVersion: z.literal(schemaVersion),
+    id: identifierSchema,
+    title: z.string().trim().min(1).max(128),
+    mode: z.enum(["read", "action"]),
+    risk: z.enum(["read", "reversible", "motion", "restricted"]),
+    inputSchema: numericCapabilityInputSchema,
+    timeoutMs: z.number().int().positive(),
+    cancelable: z.boolean(),
+    freshnessMs: z.number().int().positive().optional(),
+    preconditions: z.array(identifierSchema),
+    approval: z
+      .object({
+        required: z.boolean(),
+      })
+      .strict(),
+    verification: z
+      .object({
+        strategy: z.literal("read_after_write"),
+        observedField: identifierSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
+export const capabilityCatalogResponseSchema = z
+  .object({
+    schemaVersion: z.literal(schemaVersion),
+    capabilities: z.array(capabilityDescriptorSchema),
+  })
+  .strict();
+
+export const workstationCapabilityCatalog =
+  capabilityCatalogResponseSchema.parse({
+    schemaVersion,
+    capabilities: [
+      {
+        schemaVersion,
+        id: "desk.move_to_height",
+        title: "Move standing desk",
+        mode: "action",
+        risk: "motion",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["heightMm"],
+          properties: {
+            heightMm: {
+              type: "integer",
+              minimum: minimumDeskHeightMm,
+              maximum: maximumDeskHeightMm,
+            },
+          },
+        },
+        timeoutMs: 5_000,
+        cancelable: false,
+        preconditions: ["station.online", "station.snapshot_fresh"],
+        approval: { required: true },
+        verification: {
+          strategy: "read_after_write",
+          observedField: "deskHeightMm",
+        },
+      },
+    ],
+  });
 
 export const deviceActionSchema = z
   .object({
@@ -142,7 +234,7 @@ export const taskPlanRequestSchema = z
 
 export const taskPlanDraftSchema = z
   .object({
-    targetHeightMm: z.number().int().min(620).max(1_280),
+    targetHeightMm: safeDeskHeightMmSchema,
     durationMinutes: z.number().int().min(15).max(180),
     interruptionPolicy: z.enum(["normal", "critical-only"]),
     assumptions: z.array(assumptionSchema).max(8),
@@ -379,6 +471,10 @@ export const cancellationRequestSchema = z
   .strict();
 
 export type DeviceAction = z.infer<typeof deviceActionSchema>;
+export type CapabilityDescriptor = z.infer<typeof capabilityDescriptorSchema>;
+export type CapabilityCatalogResponse = z.infer<
+  typeof capabilityCatalogResponseSchema
+>;
 export type PlannerProvider = z.infer<typeof plannerProviderSchema>;
 export type PlannerProviderId = z.infer<typeof plannerProviderIdSchema>;
 export type PlannerProvidersResponse = z.infer<

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  capabilityCatalogResponseSchema,
   plannerAttemptsResponseSchema,
   plannerProvidersResponseSchema,
   taskEventSchema,
@@ -9,7 +10,43 @@ import {
   taskPlanResponseSchema,
   taskRunViewSchema,
   taskSpecSchema,
+  workstationCapabilityCatalog,
 } from "./index";
+
+describe("Device capability catalog", () => {
+  it("publishes the desk motion envelope and mandatory approval boundary", () => {
+    const catalog = capabilityCatalogResponseSchema.parse(
+      workstationCapabilityCatalog,
+    );
+
+    expect(catalog).toEqual({
+      schemaVersion: 1,
+      capabilities: [
+        expect.objectContaining({
+          id: "desk.move_to_height",
+          mode: "action",
+          risk: "motion",
+          cancelable: false,
+          approval: { required: true },
+          inputSchema: expect.objectContaining({
+            required: ["heightMm"],
+            properties: {
+              heightMm: {
+                type: "integer",
+                minimum: 620,
+                maximum: 1_280,
+              },
+            },
+          }),
+          verification: {
+            strategy: "read_after_write",
+            observedField: "deskHeightMm",
+          },
+        }),
+      ],
+    });
+  });
+});
 
 describe("TaskSpec contract", () => {
   it("matches the versioned planner-to-runtime payload", () => {

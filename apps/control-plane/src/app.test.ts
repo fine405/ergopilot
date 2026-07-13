@@ -88,6 +88,31 @@ const plannedTask: TaskPlanResponse = {
 };
 
 describe("control-plane API", () => {
+  it("exposes the versioned device capability catalog", async () => {
+    const response = await createApp(fakeStation()).request(
+      "/api/capabilities",
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      schemaVersion: 1,
+      capabilities: [
+        {
+          schemaVersion: 1,
+          id: "desk.move_to_height",
+          mode: "action",
+          risk: "motion",
+          approval: { required: true },
+          inputSchema: {
+            properties: {
+              heightMm: { minimum: 620, maximum: 1_280 },
+            },
+          },
+        },
+      ],
+    });
+  });
+
   it("streams validated task and station observations", async () => {
     const station = fakeStation();
     const executingRun: TaskRunView = {
