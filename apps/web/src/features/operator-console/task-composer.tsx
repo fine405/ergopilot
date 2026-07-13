@@ -76,9 +76,8 @@ export function TaskComposer({
     }));
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsed = workstationConfigurationSchema.safeParse(configuration);
+  async function submitConfiguration(next: WorkstationConfiguration) {
+    const parsed = workstationConfigurationSchema.safeParse(next);
     if (!parsed.success || !requestedBy.trim()) {
       setValidationError("Keep every control inside its displayed safe range.");
       return;
@@ -96,6 +95,16 @@ export function TaskComposer({
     } catch {
       // React Query exposes the mutation error through the `error` prop.
     }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitConfiguration(configuration);
+  }
+
+  async function handlePreset(next: WorkstationConfiguration) {
+    setConfiguration(next);
+    await submitConfiguration(next);
   }
 
   async function handleSaveProfile() {
@@ -139,8 +148,9 @@ export function TaskComposer({
         </div>
         <CardTitle>Workstation controls</CardTitle>
         <CardDescription>
-          Manual controls and presets produce the same protected four-step task
-          as Chat. Nothing moves before approval.
+          Presets create an approval-ready run in one click. Manual controls and
+          Chat use the same protected four-step task; nothing moves before
+          approval.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -166,7 +176,8 @@ export function TaskComposer({
                   variant="outline"
                   className="h-auto items-start justify-start px-3 py-2 text-left"
                   aria-label={`Apply ${preset.name} preset`}
-                  onClick={() => setConfiguration(preset.configuration)}
+                  disabled={isPending || !snapshot}
+                  onClick={() => void handlePreset(preset.configuration)}
                 >
                   <span>
                     <span className="block font-medium">{preset.name}</span>

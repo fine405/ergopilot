@@ -14,7 +14,9 @@ import {
   RigidBody,
 } from "@react-three/rapier";
 import { useRef } from "react";
-import { MathUtils } from "three";
+import { type Group, MathUtils } from "three";
+
+import { backrestResponseRate, backrestTargetAngle } from "./backrest-motion";
 
 const camera = {
   position: [5.4, 3.6, 6.4] as [number, number, number],
@@ -434,7 +436,6 @@ function ErgonomicChair({
   const armX = chair.armrestWidthMm / 1_000;
   const armY = seatY + chair.armrestHeightMm / 500;
   const armZ = -chair.armrestDepthMm / 500;
-  const backAngle = MathUtils.degToRad(chair.reclineAngleDeg - 90);
   const previewScale = preview ? 1.012 : 1;
 
   return (
@@ -462,9 +463,7 @@ function ErgonomicChair({
         )}
       </group>
 
-      <group position={[0, seatY + 0.01, 0.38]} rotation={[backAngle, 0, 0]}>
-        <Backrest chair={chair} preview={preview} />
-      </group>
+      <BackrestMotion chair={chair} preview={preview} seatY={seatY} />
 
       {[-1, 1].map((side) => (
         <group key={side} position={[side * armX, 0, armZ]}>
@@ -486,6 +485,42 @@ function ErgonomicChair({
       ))}
 
       <ReclineControl chair={chair} preview={preview} seatY={seatY} />
+    </group>
+  );
+}
+
+function BackrestMotion({
+  chair,
+  preview,
+  seatY,
+}: {
+  chair: WorkstationConfiguration["chair"];
+  preview: boolean;
+  seatY: number;
+}) {
+  const group = useRef<Group>(null);
+  const renderedAngle = useRef(backrestTargetAngle(chair, 0));
+
+  useFrame(({ clock }, delta) => {
+    const target = preview
+      ? MathUtils.degToRad(chair.reclineAngleDeg - 90)
+      : backrestTargetAngle(chair, clock.elapsedTime);
+    renderedAngle.current = MathUtils.damp(
+      renderedAngle.current,
+      target,
+      preview ? 20 : backrestResponseRate(chair),
+      delta,
+    );
+    if (group.current) group.current.rotation.x = renderedAngle.current;
+  });
+
+  return (
+    <group
+      ref={group}
+      position={[0, seatY + 0.01, 0.38]}
+      rotation={[renderedAngle.current, 0, 0]}
+    >
+      <Backrest chair={chair} preview={preview} />
     </group>
   );
 }

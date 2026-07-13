@@ -288,8 +288,9 @@ export function AgentPlannerCard({
               <Message from="assistant">
                 <MessageContent>
                   <p>
-                    Tell me the desk height, lumbar support, or both. I will
-                    produce one or two typed actions first;{" "}
+                    Ask for a precise adjustment, a complete ergonomic setup, or
+                    a built-in or saved scene. I will preserve unmentioned
+                    device settings and produce typed actions first;{" "}
                     <strong>nothing moves during planning</strong>.
                   </p>
                 </MessageContent>

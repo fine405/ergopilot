@@ -1,6 +1,6 @@
 use ergopilot_protocol::{
-    CommandStatus, CommandView, DeviceAction, DeviceCommand, PolicyGrant, WorkstationSnapshot,
-    SCHEMA_VERSION,
+    ChairErgonomics, CommandStatus, CommandView, DeviceAction, DeviceCommand, LightConfiguration,
+    PolicyGrant, ReminderConfiguration, WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use station_core::{DeviceAdapter, DeviceError, DeviceExecution, RuntimeError, StationRuntime};
@@ -298,6 +298,58 @@ fn lumbar_support_outside_the_device_envelope_is_rejected() {
         }
     ));
     assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
+}
+
+#[test]
+fn complete_workstation_actions_outside_the_device_envelope_are_rejected() {
+    let mut chair = valid_chair();
+    chair.recline_angle_deg = 109;
+    let actions = [
+        DeviceAction::ChairAdjustErgonomics(chair),
+        DeviceAction::LightConfigure(LightConfiguration {
+            brightness_percent: 101,
+            color_temperature_k: 4_300,
+        }),
+        DeviceAction::ReminderConfigure(ReminderConfiguration {
+            enabled: true,
+            interval_minutes: 181,
+        }),
+    ];
+
+    for action in actions {
+        let mut runtime = test_runtime(TestDevice::new());
+        let mut command = desk_command();
+        let capability_id = action.capability_id();
+        command.action = action;
+        let grant = grant_for(&command, 900);
+
+        let error = runtime.execute(command, &grant, 1_000).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RuntimeError::UnsafeActionConfiguration {
+                capability_id: ref actual
+            } if *actual == capability_id
+        ));
+        assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
+    }
+}
+
+fn valid_chair() -> ChairErgonomics {
+    ChairErgonomics {
+        seat_height_mm: 470,
+        seat_depth_mm: 450,
+        lumbar_support_percent: 50,
+        armrest_height_mm: 240,
+        armrest_depth_mm: 0,
+        armrest_width_mm: 480,
+        armrest_angle_deg: 0,
+        recline_angle_deg: 110,
+        recline_resistance_percent: 55,
+        recline_locked: true,
+        headrest_height_mm: 50,
+        headrest_angle_deg: 0,
+    }
 }
 
 #[test]

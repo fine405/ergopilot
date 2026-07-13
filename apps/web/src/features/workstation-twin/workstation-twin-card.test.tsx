@@ -5,7 +5,7 @@ import {
   type TaskRunView,
   type WorkstationSnapshot,
 } from "@ergopilot/contracts";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WorkstationTwinCard } from "./workstation-twin-card";
@@ -148,7 +148,10 @@ const awaitingProfileRun: TaskRunView = {
   },
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("WorkstationTwinCard", () => {
   it("distinguishes verified height from a pending approval preview", async () => {
@@ -217,5 +220,28 @@ describe("WorkstationTwinCard", () => {
 
     expect(screen.getByText("Preview 780 mm")).toBeTruthy();
     expect(screen.getByText("Preview lumbar 65%")).toBeTruthy();
+  });
+
+  it("raises a recurring in-app sedentary reminder and starts the next cycle", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-13T10:00:00Z"));
+    const nowMs = Date.now();
+    render(
+      <WorkstationTwinCard
+        snapshot={{
+          ...snapshot,
+          reminderEnabled: true,
+          reminderIntervalMinutes: 45,
+          reminderStartedAtMs: nowMs - 45 * 60_000 - 30_000,
+        }}
+        run={undefined}
+        isLoading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe("Movement due now");
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(screen.getByRole("status").textContent).toBe("44 min remaining");
   });
 });

@@ -1,8 +1,65 @@
+import {
+  defaultWorkstationConfiguration,
+  defaultWorkstationSnapshotFields,
+} from "@ergopilot/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { PlannerError, StructuredTaskPlanner } from "./task-planner";
 
 describe("StructuredTaskPlanner", () => {
+  it("supplies authoritative state and saved profile memory to Chat", async () => {
+    let generatedPrompt = "";
+    const generateDraft = vi.fn(async (prompt: string) => {
+      generatedPrompt = prompt;
+      return {
+        action: "workstation.apply_profile",
+        configuration: defaultWorkstationConfiguration,
+        durationMinutes: 45,
+        interruptionPolicy: "normal",
+        assumptions: [],
+      };
+    });
+    const planner = new StructuredTaskPlanner({
+      generateDraft,
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      createTaskId: () => "task-agent-context-1",
+    });
+    const snapshot = {
+      ...defaultWorkstationSnapshotFields,
+      schemaVersion: 1 as const,
+      stationId: "station-1",
+      stateVersion: 4,
+      observedAtMs: 1_000,
+      deskHeightMm: 760,
+      movementCount: 3,
+    };
+    const profile = {
+      schemaVersion: 1 as const,
+      id: "profile-reading",
+      name: "My reading mode",
+      configuration: defaultWorkstationConfiguration,
+      createdAtMs: 900,
+      updatedAtMs: 900,
+    };
+
+    await planner.plan(
+      {
+        provider: "deepseek",
+        prompt: "切换到我的阅读模式",
+        requestedBy: "user-1",
+      },
+      { snapshot, profiles: [profile] },
+    );
+
+    expect(generatedPrompt).toContain(
+      "Authoritative current workstation snapshot",
+    );
+    expect(generatedPrompt).toContain('"deskHeightMm":760');
+    expect(generatedPrompt).toContain('"name":"My reading mode"');
+    expect(generatedPrompt).toContain("切换到我的阅读模式");
+  });
+
   it("turns a bounded model draft into the exact runtime TaskSpec", async () => {
     const generateDraft = vi.fn(async () => ({
       action: "desk.move_to_height",

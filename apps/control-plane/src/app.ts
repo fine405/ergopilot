@@ -281,7 +281,14 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
         }
         let plan: TaskPlanResponse;
         try {
-          plan = await planner.plan(request);
+          const [snapshot, profiles] = await Promise.all([
+            station.stationSnapshot(startedAtMs),
+            station.listProfiles(),
+          ]);
+          plan = await planner.plan(request, {
+            snapshot,
+            profiles: profiles.profiles,
+          });
         } catch (error) {
           await recordAttempt(
             "failed",

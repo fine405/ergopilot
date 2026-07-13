@@ -283,19 +283,7 @@ function SedentaryReminder({ snapshot }: { snapshot: WorkstationSnapshot }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const elapsedMs = snapshot.reminderStartedAtMs
-    ? Math.max(0, nowMs - snapshot.reminderStartedAtMs)
-    : 0;
-  const remainingMs = Math.max(
-    0,
-    snapshot.reminderIntervalMinutes * 60_000 - elapsedMs,
-  );
-  const remainingMinutes = Math.ceil(remainingMs / 60_000);
-  const value = snapshot.reminderEnabled
-    ? remainingMinutes > 0
-      ? `${remainingMinutes} min remaining`
-      : "Movement due now"
-    : "Paused";
+  const value = sedentaryReminderValue(snapshot, nowMs);
 
   return (
     <div className="rounded-lg border bg-card/50 px-3 py-2">
@@ -303,9 +291,30 @@ function SedentaryReminder({ snapshot }: { snapshot: WorkstationSnapshot }) {
         <Clock3 className="size-3.5" aria-hidden="true" />
         Sedentary reminder
       </p>
-      <p className="mt-1 font-mono text-base font-semibold">{value}</p>
+      <p
+        className="mt-1 font-mono text-base font-semibold"
+        role="status"
+        aria-live="polite"
+      >
+        {value}
+      </p>
     </div>
   );
+}
+
+function sedentaryReminderValue(snapshot: WorkstationSnapshot, nowMs: number) {
+  if (!snapshot.reminderEnabled) return "Paused";
+  if (!snapshot.reminderStartedAtMs) {
+    return `${snapshot.reminderIntervalMinutes} min remaining`;
+  }
+
+  const intervalMs = snapshot.reminderIntervalMinutes * 60_000;
+  const elapsedMs = Math.max(0, nowMs - snapshot.reminderStartedAtMs);
+  const cycleElapsedMs = elapsedMs % intervalMs;
+  if (elapsedMs >= intervalMs && cycleElapsedMs < 60_000) {
+    return "Movement due now";
+  }
+  return `${Math.ceil((intervalMs - cycleElapsedMs) / 60_000)} min remaining`;
 }
 
 function twinStateLabel(run: TaskRunView | undefined) {

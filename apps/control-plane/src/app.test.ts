@@ -1,4 +1,5 @@
 import {
+  defaultWorkstationConfiguration,
   defaultWorkstationSnapshotFields,
   type PlannerEvaluationReport,
   type RuntimeObservation,
@@ -145,6 +146,57 @@ describe("control-plane API", () => {
     expect(await response.json()).toEqual(workstationCapabilityCatalog);
   });
 
+  it("lists, validates, and persists complete workstation profiles", async () => {
+    const station = fakeStation();
+    const saved = {
+      schemaVersion: 1 as const,
+      id: "profile-reading",
+      name: "Reading",
+      configuration: defaultWorkstationConfiguration,
+      createdAtMs: 1_200,
+      updatedAtMs: 1_200,
+    };
+    vi.mocked(station.listProfiles).mockResolvedValue({ profiles: [saved] });
+    vi.mocked(station.saveProfile).mockResolvedValue(saved);
+    const app = createApp(station, { now: () => 1_200 });
+
+    const listResponse = await app.request("/api/profiles");
+    expect(listResponse.status).toBe(200);
+    expect(await listResponse.json()).toEqual({ profiles: [saved] });
+
+    const saveResponse = await app.request("/api/profiles", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: saved.id,
+        name: saved.name,
+        configuration: saved.configuration,
+      }),
+    });
+    expect(saveResponse.status).toBe(201);
+    expect(await saveResponse.json()).toEqual(saved);
+    expect(station.saveProfile).toHaveBeenCalledWith(
+      {
+        id: saved.id,
+        name: saved.name,
+        configuration: saved.configuration,
+      },
+      1_200,
+    );
+
+    const invalidResponse = await app.request("/api/profiles", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "profile-unsafe",
+        name: "Unsafe",
+        configuration: { ...saved.configuration, deskHeightMm: 1_400 },
+      }),
+    });
+    expect(invalidResponse.status).toBe(400);
+    expect(station.saveProfile).toHaveBeenCalledOnce();
+  });
+
   it("streams validated task and station observations", async () => {
     const station = fakeStation();
     const executingRun: TaskRunView = {
@@ -285,11 +337,20 @@ describe("control-plane API", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(plannedTask);
-    expect(planner.plan).toHaveBeenCalledWith({
-      provider: "deepseek",
-      prompt: "Prepare a 45 minute standing focus session",
-      requestedBy: "user-1",
-    });
+    expect(planner.plan).toHaveBeenCalledWith(
+      {
+        provider: "deepseek",
+        prompt: "Prepare a 45 minute standing focus session",
+        requestedBy: "user-1",
+      },
+      {
+        snapshot: expect.objectContaining({
+          stationId: "station-sim-1",
+          deskHeightMm: 720,
+        }),
+        profiles: [],
+      },
+    );
     expect(station.startTask).not.toHaveBeenCalled();
   });
 

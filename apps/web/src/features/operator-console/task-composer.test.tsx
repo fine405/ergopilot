@@ -47,7 +47,6 @@ describe("TaskComposer", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Apply Nap preset" }));
-    fireEvent.click(screen.getByRole("button", { name: "Create profile run" }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     const task = onSubmit.mock.calls[0]?.[0];
@@ -60,6 +59,68 @@ describe("TaskComposer", () => {
       type: "light.configure",
       input: { brightnessPercent: 22, colorTemperatureK: 2_900 },
     });
+  });
+
+  it("does not create a run from invalid operator or device input", async () => {
+    const onSubmit = vi.fn<(task: TaskSpec) => Promise<void>>();
+    const { rerender } = render(
+      <TaskComposer
+        snapshot={snapshot}
+        profiles={[]}
+        onSubmit={onSubmit}
+        onSaveProfile={vi.fn()}
+        isPending={false}
+        isSaving={false}
+        error={null}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Requested by"), {
+      target: { value: " " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create profile run" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText(/displayed safe range/i)).toBeTruthy();
+
+    rerender(
+      <TaskComposer
+        snapshot={{ ...snapshot, seatHeightMm: 999 }}
+        profiles={[]}
+        onSubmit={onSubmit}
+        onSaveProfile={vi.fn()}
+        isPending={false}
+        isSaving={false}
+        error={null}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Requested by"), {
+      target: { value: "demo-user" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create profile run" }));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("requires a name before saving station memory", () => {
+    const onSaveProfile =
+      vi.fn<(profile: SaveWorkstationProfileRequest) => Promise<void>>();
+    render(
+      <TaskComposer
+        snapshot={snapshot}
+        profiles={[]}
+        onSubmit={vi.fn()}
+        onSaveProfile={onSaveProfile}
+        isPending={false}
+        isSaving={false}
+        error={null}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Save current preset" }),
+    );
+
+    expect(onSaveProfile).not.toHaveBeenCalled();
+    expect(screen.getByText(/add a preset name/i)).toBeTruthy();
   });
 
   it("saves the current complete configuration as station memory", async () => {
