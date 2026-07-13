@@ -72,6 +72,9 @@ describe("ProcessStationClient", () => {
     await expect(
       client.approveTask(awaiting.runId, "user-2", 1_100),
     ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      client.cancelTask(awaiting.runId, "user-2", 1_100),
+    ).rejects.toMatchObject({ code: "forbidden" });
 
     await expect(
       client.startTask(
@@ -94,6 +97,18 @@ describe("ProcessStationClient", () => {
     await expect(
       client.approveTask(awaiting.runId, "user-1", 61_000),
     ).rejects.toMatchObject({ code: "approval_expired" });
+
+    const cancellable = await client.startTask(
+      { ...task, taskId: "task-process-client-cancel" },
+      1_300,
+    );
+    const cancelled = await client.cancelTask(
+      cancellable.runId,
+      "user-1",
+      1_400,
+    );
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.events.at(-1)?.eventType).toBe("run_cancelled");
   });
 
   it("runs the browser control path against the real Rust runtime", async () => {

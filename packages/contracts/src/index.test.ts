@@ -285,7 +285,7 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
-  it("accepts dedicated resume attempt and completion events", () => {
+  it("accepts dedicated recovery and cancellation events", () => {
     expect(
       taskEventSchema.parse({
         sequence: 5,
@@ -300,6 +300,13 @@ describe("TaskRunView contract", () => {
         atMs: 1_200,
       }).eventType,
     ).toBe("run_resumed");
+    expect(
+      taskEventSchema.parse({
+        sequence: 3,
+        eventType: "run_cancelled",
+        atMs: 1_100,
+      }).eventType,
+    ).toBe("run_cancelled");
   });
 
   it("keeps suspension reasons exclusive to suspended runs", () => {
@@ -347,6 +354,51 @@ describe("TaskRunView contract", () => {
 
     expect(run.approval?.status).toBe("pending");
     expect(run.suspensionReason).toBeNull();
+    const cancelledRun = {
+      ...run,
+      status: "cancelled",
+      approval: { ...run.approval, status: "cancelled" },
+      events: [
+        ...run.events,
+        { sequence: 3, eventType: "run_cancelled", atMs: 1_100 },
+      ],
+    };
+    expect(taskRunViewSchema.parse(cancelledRun).status).toBe("cancelled");
+    const invalidCancelledRuns = [
+      {
+        ...cancelledRun,
+        approval: { ...cancelledRun.approval, status: "approved" },
+      },
+      {
+        ...cancelledRun,
+        command: {
+          commandId: "cmd-run-task-web-1-desk-1",
+          idempotencyKey: "run-task-web-1:desk-1",
+          status: "succeeded",
+          outcome: {
+            stateVersion: 2,
+            deskHeightMm: 780,
+            verifiedAtMs: 1_100,
+          },
+          wasReplayed: false,
+        },
+      },
+      {
+        ...cancelledRun,
+        commandEvents: [
+          {
+            sequence: 1,
+            commandId: "cmd-run-task-web-1-desk-1",
+            eventType: "accepted",
+            atMs: 1_100,
+          },
+        ],
+      },
+      { ...cancelledRun, events: run.events },
+    ];
+    for (const candidate of invalidCancelledRuns) {
+      expect(taskRunViewSchema.safeParse(candidate).success).toBe(false);
+    }
     expect(
       taskRunViewSchema.safeParse({
         ...run,

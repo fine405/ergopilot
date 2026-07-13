@@ -174,7 +174,7 @@ export const approvalViewSchema = z
   .object({
     approvalId: z.string(),
     expiresAtMs: z.number().int().nonnegative(),
-    status: z.enum(["pending", "approved", "expired"]),
+    status: z.enum(["pending", "approved", "expired", "cancelled"]),
     approvedBy: z.string().nullable(),
     approvedAtMs: z.number().int().nonnegative().nullable(),
   })
@@ -239,6 +239,7 @@ export const taskEventSchema = z
       "run_resume_attempted",
       "run_resumed",
       "run_suspended",
+      "run_cancelled",
     ]),
     atMs: z.number().int().nonnegative(),
   })
@@ -263,6 +264,7 @@ export const taskRunViewSchema = z
       "failed",
       "denied",
       "suspended",
+      "cancelled",
     ]),
     suspensionReason: suspensionReasonSchema.nullable(),
     approval: approvalViewSchema.nullable(),
@@ -279,6 +281,36 @@ export const taskRunViewSchema = z
         path: ["suspensionReason"],
         message: "suspensionReason must be null unless status is suspended",
       });
+    }
+    if (run.status === "cancelled") {
+      if (run.approval?.status !== "cancelled") {
+        context.addIssue({
+          code: "custom",
+          path: ["approval"],
+          message: "cancelled runs must have a cancelled approval",
+        });
+      }
+      if (run.command !== null) {
+        context.addIssue({
+          code: "custom",
+          path: ["command"],
+          message: "cancelled runs must not have a device command",
+        });
+      }
+      if (run.commandEvents.length > 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["commandEvents"],
+          message: "cancelled runs must not have command events",
+        });
+      }
+      if (run.events.at(-1)?.eventType !== "run_cancelled") {
+        context.addIssue({
+          code: "custom",
+          path: ["events"],
+          message: "cancelled runs must end with run_cancelled evidence",
+        });
+      }
     }
   });
 
@@ -299,6 +331,12 @@ export const approvalRequestSchema = z
   })
   .strict();
 
+export const cancellationRequestSchema = z
+  .object({
+    cancelledBy: actorIdSchema,
+  })
+  .strict();
+
 export type DeviceAction = z.infer<typeof deviceActionSchema>;
 export type PlannerProvider = z.infer<typeof plannerProviderSchema>;
 export type PlannerProviderId = z.infer<typeof plannerProviderIdSchema>;
@@ -316,3 +354,4 @@ export type TaskSpec = z.infer<typeof taskSpecSchema>;
 export type TaskRunView = z.infer<typeof taskRunViewSchema>;
 export type WorkstationSnapshot = z.infer<typeof workstationSnapshotSchema>;
 export type ApprovalRequest = z.infer<typeof approvalRequestSchema>;
+export type CancellationRequest = z.infer<typeof cancellationRequestSchema>;

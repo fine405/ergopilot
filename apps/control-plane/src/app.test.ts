@@ -716,6 +716,25 @@ describe("control-plane API", () => {
     expect(station.reconcileTask).not.toHaveBeenCalled();
   });
 
+  it("cancels a pending run for the named requester", async () => {
+    const station = fakeStation();
+    const app = createApp(station, { now: () => 1_050 });
+
+    const response = await app.request("/api/task-runs/run-task-api-1/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cancelledBy: "user-1" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "cancelled" });
+    expect(station.cancelTask).toHaveBeenCalledWith(
+      "run-task-api-1",
+      "user-1",
+      1_050,
+    );
+  });
+
   it.each([
     ["invalid_request", 400],
     ["forbidden", 403],
@@ -791,6 +810,18 @@ function fakeStation(): StationClient {
       ...awaitingRun,
       status: "suspended" as const,
       suspensionReason: "device_unavailable" as const,
+    })),
+    cancelTask: vi.fn(async () => ({
+      ...awaitingRun,
+      status: "cancelled" as const,
+      approval: awaitingRun.approval && {
+        ...awaitingRun.approval,
+        status: "cancelled" as const,
+      },
+      events: [
+        ...awaitingRun.events,
+        { sequence: 3, eventType: "run_cancelled" as const, atMs: 1_050 },
+      ],
     })),
     resumeTask: vi.fn(async () => awaitingRun),
     reconcileTask: vi.fn(async () => awaitingRun),

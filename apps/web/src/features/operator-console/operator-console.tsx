@@ -81,6 +81,18 @@ export function OperatorConsole({
       ]);
     },
   });
+  const cancelMutation = useMutation({
+    mutationFn: (run: TaskRunView) =>
+      controlPlane.cancelTask(run.runId, run.task.requestedBy),
+    onSuccess: (run) => {
+      queryClient.setQueryData(["task-run", run.runId], run);
+    },
+    onSettled: async (_data, _error, run) => {
+      await queryClient.invalidateQueries({
+        queryKey: ["task-run", run.runId],
+      });
+    },
+  });
   const approveWithAckLossMutation = useMutation({
     mutationFn: (run: TaskRunView) =>
       controlPlane.demoApproveTaskWithAckLoss(run.runId, run.task.requestedBy),
@@ -164,6 +176,7 @@ export function OperatorConsole({
   const actionError =
     errorMessage(startMutation.error) ??
     errorMessage(approveMutation.error) ??
+    errorMessage(cancelMutation.error) ??
     errorMessage(approveWithAckLossMutation.error) ??
     errorMessage(approveWithDeviceOfflineMutation.error) ??
     errorMessage(approveWithDeviceUnavailableBeforeDispatchMutation.error) ??
@@ -172,6 +185,7 @@ export function OperatorConsole({
   const isMutating =
     startMutation.isPending ||
     approveMutation.isPending ||
+    cancelMutation.isPending ||
     approveWithAckLossMutation.isPending ||
     approveWithDeviceOfflineMutation.isPending ||
     approveWithDeviceUnavailableBeforeDispatchMutation.isPending ||
@@ -262,6 +276,7 @@ export function OperatorConsole({
             error={errorMessage(runQuery.error) ?? actionError}
             isMutating={isMutating}
             onApprove={(run) => approveMutation.mutate(run)}
+            onCancel={(run) => cancelMutation.mutate(run)}
             onApproveWithAckLoss={(run) =>
               approveWithAckLossMutation.mutate(run)
             }

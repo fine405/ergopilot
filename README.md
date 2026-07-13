@@ -26,6 +26,8 @@ runnable end to end. The current slice implements:
   device-state version;
 - deterministic `deny` and `require_approval` decisions;
 - durable approval ownership, expiry, run state and ordered events in SQLite;
+- requester-scoped cancellation of pending approvals, atomically serialized
+  against approval so a cancelled run cannot dispatch a device command;
 - persist-before-effect execution, idempotent replay and read-after-write
   verification;
 - reconciliation across both task/command dispatch crash windows;
@@ -101,6 +103,13 @@ movement count becomes one. The runtime accepts this dedicated resume action
 only for `device_unavailable`; runs suspended for `stale_state` or `expired`
 require a fresh run against current state. Unknown physical outcomes continue
 through **Reconcile state** instead.
+
+To exercise cancellation, create a task and choose **Cancel run** before
+approval. The run becomes `cancelled`, records `run_cancelled`, and remains
+cancelled across restarts without creating a command or moving the simulated
+desk. Cancellation is intentionally limited to `awaiting_approval`; once a
+command can be in flight, the runtime refuses to claim cancellation until a
+device-side execution/cancel arbitration protocol exists.
 
 The deterministic CLI demos remain available:
 

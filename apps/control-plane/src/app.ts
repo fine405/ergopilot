@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   approvalRequestSchema,
+  cancellationRequestSchema,
   type PlannerAttempt,
   plannerAttemptSchema,
   plannerAttemptsResponseSchema,
@@ -282,6 +283,20 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
           now(),
         );
         return context.json(run);
+      },
+    )
+    .post(
+      "/api/task-runs/:runId/cancel",
+      zValidator("json", cancellationRequestSchema),
+      async (context) => {
+        const { cancelledBy } = context.req.valid("json");
+        return context.json(
+          await station.cancelTask(
+            context.req.param("runId"),
+            cancelledBy,
+            now(),
+          ),
+        );
       },
     )
     .post(

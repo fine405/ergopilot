@@ -52,6 +52,7 @@ const taskEventPresentation = {
   ],
   run_resumed: ["Run resumed", CheckCircle2, "text-status-ok"],
   run_suspended: ["Run suspended", TriangleAlert, "text-status-warn"],
+  run_cancelled: ["Run cancelled", XCircle, "text-muted-foreground"],
 } satisfies Record<TaskEventType, Presentation>;
 
 const commandEventPresentation = {
@@ -89,6 +90,7 @@ const terminalTaskEvents = new Set<TaskEventType>([
   "run_reconciled",
   "run_resumed",
   "run_suspended",
+  "run_cancelled",
 ]);
 
 const eventTimeFormatter = new Intl.DateTimeFormat("en", {

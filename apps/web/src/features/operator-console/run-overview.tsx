@@ -1,6 +1,7 @@
 import type { TaskRunView } from "@ergopilot/contracts";
 import {
   CircleDashed,
+  CircleOff,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
@@ -47,6 +48,7 @@ interface RunOverviewProps {
   error: string | null;
   isMutating: boolean;
   onApprove: (run: TaskRunView) => void;
+  onCancel: (run: TaskRunView) => void;
   onApproveWithAckLoss: (run: TaskRunView) => void;
   onApproveWithDeviceOffline: (run: TaskRunView) => void;
   onApproveWithDeviceUnavailableBeforeDispatch: (run: TaskRunView) => void;
@@ -60,6 +62,7 @@ export function RunOverview({
   error,
   isMutating,
   onApprove,
+  onCancel,
   onApproveWithAckLoss,
   onApproveWithDeviceOffline,
   onApproveWithDeviceUnavailableBeforeDispatch,
@@ -174,64 +177,98 @@ export function RunOverview({
                   </p>
                 </div>
               </div>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button disabled={isMutating}>Review & approve</Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Authorize desk motion?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This grant is scoped to run {run.runId}, its exact
-                      command, target height {targetHeight} mm, and the state
-                      version used by the plan. It cannot authorize a different
-                      movement.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <div className="rounded-lg border bg-muted/40 p-3 font-mono text-xs">
-                    approval: {run.approval.approvalId}
-                    <br />
-                    expires: {formatExpiry(run.approval.expiresAtMs)}
-                  </div>
-                  <div className="space-y-3 rounded-lg border border-dashed p-3">
-                    <div>
-                      <p className="text-sm font-medium">Fault injection lab</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Demo-only paths; normal approval remains unchanged.
-                      </p>
+              <div className="flex flex-wrap gap-2">
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="outline" disabled={isMutating}>
+                      Cancel run
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Cancel this pending run?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        The runtime will close this approval request before a
+                        device command is created. The cancelled run cannot be
+                        approved or resumed.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep waiting</AlertDialogCancel>
+                      <AlertDialogAction
+                        variant="destructive"
+                        onClick={() => onCancel(run)}
+                      >
+                        Confirm cancellation
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button disabled={isMutating}>Review & approve</Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Authorize desk motion?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This grant is scoped to run {run.runId}, its exact
+                        command, target height {targetHeight} mm, and the state
+                        version used by the plan. It cannot authorize a
+                        different movement.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="rounded-lg border bg-muted/40 p-3 font-mono text-xs">
+                      approval: {run.approval.approvalId}
+                      <br />
+                      expires: {formatExpiry(run.approval.expiresAtMs)}
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={() => onApproveWithAckLoss(run)}
-                      >
-                        Approve + lose ACK (demo)
-                      </AlertDialogAction>
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={() => onApproveWithDeviceOffline(run)}
-                      >
-                        Approve + device offline (demo)
-                      </AlertDialogAction>
-                      <AlertDialogAction
-                        variant="destructive"
-                        onClick={() =>
-                          onApproveWithDeviceUnavailableBeforeDispatch(run)
-                        }
-                        className="sm:col-span-2"
-                      >
-                        Approve + unavailable before dispatch (demo)
-                      </AlertDialogAction>
+                    <div className="space-y-3 rounded-lg border border-dashed p-3">
+                      <div>
+                        <p className="text-sm font-medium">
+                          Fault injection lab
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Demo-only paths; normal approval remains unchanged.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <AlertDialogAction
+                          variant="destructive"
+                          onClick={() => onApproveWithAckLoss(run)}
+                        >
+                          Approve + lose ACK (demo)
+                        </AlertDialogAction>
+                        <AlertDialogAction
+                          variant="destructive"
+                          onClick={() => onApproveWithDeviceOffline(run)}
+                        >
+                          Approve + device offline (demo)
+                        </AlertDialogAction>
+                        <AlertDialogAction
+                          variant="destructive"
+                          onClick={() =>
+                            onApproveWithDeviceUnavailableBeforeDispatch(run)
+                          }
+                          className="sm:col-span-2"
+                        >
+                          Approve + unavailable before dispatch (demo)
+                        </AlertDialogAction>
+                      </div>
                     </div>
-                  </div>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => onApprove(run)}>
-                      Approve one motion
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => onApprove(run)}>
+                        Approve one motion
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
             </div>
           )}
 
@@ -293,6 +330,18 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
         <AlertDescription>
           The runtime read the device state after execution and observed the
           requested desk height.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (run.status === "cancelled") {
+    return (
+      <Alert>
+        <CircleOff />
+        <AlertTitle>Run cancelled before dispatch</AlertTitle>
+        <AlertDescription>
+          The requester closed the pending approval. No device command was
+          created and no physical action was attempted.
         </AlertDescription>
       </Alert>
     );

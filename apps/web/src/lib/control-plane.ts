@@ -37,6 +37,7 @@ export interface ControlPlane {
   startTask(task: TaskSpec): Promise<TaskRunView>;
   inspectTask(runId: string): Promise<TaskRunView>;
   approveTask(runId: string, approvedBy: string): Promise<TaskRunView>;
+  cancelTask(runId: string, cancelledBy: string): Promise<TaskRunView>;
   demoApproveTaskWithAckLoss(
     runId: string,
     approvedBy: string,
@@ -97,6 +98,16 @@ export class HonoControlPlane implements ControlPlane {
       param: { runId },
       json: { approvedBy },
     });
+    return parseResponse(response, taskRunViewSchema);
+  }
+
+  async cancelTask(runId: string, cancelledBy: string): Promise<TaskRunView> {
+    const response = await this.#client.api["task-runs"][":runId"].cancel.$post(
+      {
+        param: { runId },
+        json: { cancelledBy },
+      },
+    );
     return parseResponse(response, taskRunViewSchema);
   }
 

@@ -57,6 +57,31 @@ fn resume_request_has_a_stable_cross_process_json_contract() {
 }
 
 #[test]
+fn cancel_request_has_a_stable_cross_process_json_contract() {
+    let request = serde_json::from_value::<RpcRequest>(json!({
+        "method": "task.cancel",
+        "params": {
+            "runId": "run-task-rpc-1",
+            "cancelledBy": "user-1",
+            "nowMs": 1_050
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({
+            "method": "task.cancel",
+            "params": {
+                "runId": "run-task-rpc-1",
+                "cancelledBy": "user-1",
+                "nowMs": 1_050
+            }
+        })
+    );
+}
+
+#[test]
 fn rpc_error_codes_cover_transition_availability_and_fallback_categories() {
     assert_eq!(
         DemoError::Task(TaskRuntimeError::RunNotApprovable {
@@ -68,6 +93,21 @@ fn rpc_error_codes_cover_transition_availability_and_fallback_categories() {
     assert_eq!(
         DemoError::Task(TaskRuntimeError::PendingCommandNotFound {
             run_id: "run-suspended".into(),
+        })
+        .rpc_code(),
+        "invalid_transition"
+    );
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::UnauthorizedCanceller {
+            expected: "user-1".into(),
+            actual: "user-2".into(),
+        })
+        .rpc_code(),
+        "forbidden"
+    );
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::RunNotCancellable {
+            run_id: "run-completed".into(),
         })
         .rpc_code(),
         "invalid_transition"
@@ -140,6 +180,48 @@ fn independent_rpc_calls_share_the_durable_task_runtime() {
     );
     assert_eq!(snapshot["result"]["deskHeightMm"], 780);
     assert_eq!(snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
+fn cancel_rpc_persists_without_dispatching_a_device_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let task = TaskSpec::prepare_focus_session("task-rpc-cancel", "user-1", 780);
+    let started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task,
+            now_ms: 1_000,
+        },
+    );
+    let run_id = started["result"]["runId"].as_str().unwrap();
+
+    let cancelled = invoke(
+        &database,
+        &authority,
+        RpcRequest::CancelTask {
+            run_id: run_id.into(),
+            cancelled_by: "user-1".into(),
+            now_ms: 1_100,
+        },
+    );
+    let snapshot = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_200,
+        },
+    );
+
+    assert_eq!(cancelled["result"]["status"], "cancelled");
+    assert_eq!(cancelled["result"]["approval"]["status"], "cancelled");
+    assert_eq!(
+        cancelled["result"]["events"][2]["eventType"],
+        "run_cancelled"
+    );
+    assert_eq!(snapshot["result"]["movementCount"], 0);
 }
 
 #[test]

@@ -87,6 +87,7 @@ pub enum TaskRunStatus {
     Failed,
     Denied,
     Suspended,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +104,7 @@ pub enum ApprovalStatus {
     Pending,
     Approved,
     Expired,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +133,7 @@ pub enum TaskEventType {
     RunResumeAttempted,
     RunResumed,
     RunSuspended,
+    RunCancelled,
 }
 
 impl TaskEventType {
@@ -149,6 +152,7 @@ impl TaskEventType {
             Self::RunResumeAttempted => "run_resume_attempted",
             Self::RunResumed => "run_resumed",
             Self::RunSuspended => "run_suspended",
+            Self::RunCancelled => "run_cancelled",
         }
     }
 }
@@ -200,6 +204,8 @@ pub enum TaskRuntimeError {
     InvalidTaskSpec { reason: &'static str },
     #[error("approval belongs to {expected}, but was submitted by {actual}")]
     UnauthorizedApprover { expected: String, actual: String },
+    #[error("task cancellation belongs to {expected}, but was submitted by {actual}")]
+    UnauthorizedCanceller { expected: String, actual: String },
     #[error("task run {run_id} is not awaiting approval")]
     RunNotApprovable { run_id: String },
     #[error("task run {run_id} has no matching pending device command")]
@@ -208,6 +214,8 @@ pub enum TaskRuntimeError {
     RunNotReconcilable { run_id: String },
     #[error("task run {run_id} is not resumable")]
     RunNotResumable { run_id: String },
+    #[error("task run {run_id} is not cancellable")]
+    RunNotCancellable { run_id: String },
     #[error("task run {run_id} exhausted its {max_attempts} recovery attempts")]
     RecoveryBudgetExhausted { run_id: String, max_attempts: usize },
     #[error("automatic allow is not implemented for this task goal")]
@@ -348,68 +356,12 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         approved_by: &str,
         now_ms: u64,
     ) -> Result<TaskRunView, TaskRuntimeError> {
-        let mut stored = self.load_run(run_id)?;
-        if stored.view.task.requested_by != approved_by {
-            return Err(TaskRuntimeError::UnauthorizedApprover {
-                expected: stored.view.task.requested_by.clone(),
-                actual: approved_by.into(),
-            });
-        }
+        let mut stored = self.prepare_approval(run_id, approved_by, now_ms)?;
         if matches!(
             stored.view.status,
             TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Suspended
         ) {
             return Ok(stored.view);
-        }
-        if stored.view.status == TaskRunStatus::Denied {
-            return Err(TaskRuntimeError::RunNotApprovable {
-                run_id: run_id.into(),
-            });
-        }
-
-        let expires_at_ms = stored
-            .view
-            .approval
-            .as_ref()
-            .map(|approval| approval.expires_at_ms)
-            .ok_or_else(|| TaskRuntimeError::CorruptRun {
-                run_id: run_id.into(),
-            })?;
-        if expires_at_ms <= now_ms && stored.command.is_none() {
-            if let Some(approval) = &mut stored.view.approval {
-                approval.status = ApprovalStatus::Expired;
-            }
-            append_event(&mut stored.view, TaskEventType::ApprovalExpired, now_ms);
-            self.save_run(&stored, now_ms)?;
-            return Err(TaskRuntimeError::ApprovalExpired {
-                expires_at_ms,
-                now_ms,
-            });
-        }
-
-        if stored.command.is_none() && stored.grant.is_none() {
-            let command = command_for(&stored, run_id, expires_at_ms)?;
-            let grant = self.policy_authority.issue(GrantRequest {
-                grant_id: command.policy_grant_id.clone(),
-                task_run_id: command.task_run_id.clone(),
-                command_id: command.command_id.clone(),
-                action: command.action.clone(),
-                expected_state_version: command.expected_state_version,
-                issued_at_ms: now_ms,
-                expires_at_ms: command.expires_at_ms,
-                rule_ids: stored.view.policy_decision.rule_ids.clone(),
-            })?;
-            if let Some(approval) = &mut stored.view.approval {
-                approval.status = ApprovalStatus::Approved;
-                approval.approved_by = Some(approved_by.into());
-                approval.approved_at_ms = Some(now_ms);
-            }
-            append_event(&mut stored.view, TaskEventType::ApprovalGranted, now_ms);
-            append_event(&mut stored.view, TaskEventType::CommandDispatched, now_ms);
-            stored.view.status = TaskRunStatus::Executing;
-            stored.command = Some(command);
-            stored.grant = Some(grant);
-            self.save_run(&stored, now_ms)?;
         }
 
         let (command, grant) = match (&stored.command, &stored.grant) {
@@ -475,11 +427,175 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         Ok(stored.view)
     }
 
+    pub fn cancel(
+        &mut self,
+        run_id: &str,
+        cancelled_by: &str,
+        now_ms: u64,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.into(),
+            })?;
+        let mut stored = deserialize_stored_run(run_id, &stored_json)?;
+        if stored.view.task.requested_by != cancelled_by {
+            return Err(TaskRuntimeError::UnauthorizedCanceller {
+                expected: stored.view.task.requested_by.clone(),
+                actual: cancelled_by.into(),
+            });
+        }
+        if stored.view.status == TaskRunStatus::Cancelled {
+            transaction.commit()?;
+            return Ok(stored.view);
+        }
+        if stored.view.status != TaskRunStatus::AwaitingApproval {
+            return Err(TaskRuntimeError::RunNotCancellable {
+                run_id: run_id.into(),
+            });
+        }
+        if stored.command.is_some() || stored.grant.is_some() {
+            return Err(TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            });
+        }
+        stored.view.status = TaskRunStatus::Cancelled;
+        stored.view.suspension_reason = None;
+        stored
+            .view
+            .approval
+            .as_mut()
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            })?
+            .status = ApprovalStatus::Cancelled;
+        append_event(&mut stored.view, TaskEventType::RunCancelled, now_ms);
+        let stored_json = serde_json::to_string(&stored)?;
+        transaction.execute(
+            "UPDATE task_runs
+             SET stored_json = ?1, updated_at_ms = ?2
+             WHERE run_id = ?3",
+            params![stored_json, now_ms, run_id],
+        )?;
+        transaction.commit()?;
+        Ok(stored.view)
+    }
+
     pub fn station_snapshot(
         &mut self,
         observed_at_ms: u64,
     ) -> Result<WorkstationSnapshot, TaskRuntimeError> {
         Ok(self.station.snapshot(observed_at_ms)?)
+    }
+
+    fn prepare_approval(
+        &mut self,
+        run_id: &str,
+        approved_by: &str,
+        now_ms: u64,
+    ) -> Result<StoredRun, TaskRuntimeError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.into(),
+            })?;
+        let mut stored = deserialize_stored_run(run_id, &stored_json)?;
+        if stored.view.task.requested_by != approved_by {
+            return Err(TaskRuntimeError::UnauthorizedApprover {
+                expected: stored.view.task.requested_by.clone(),
+                actual: approved_by.into(),
+            });
+        }
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Suspended
+        ) {
+            transaction.commit()?;
+            return Ok(stored);
+        }
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Denied | TaskRunStatus::Cancelled
+        ) {
+            return Err(TaskRuntimeError::RunNotApprovable {
+                run_id: run_id.into(),
+            });
+        }
+
+        let expires_at_ms = stored
+            .view
+            .approval
+            .as_ref()
+            .map(|approval| approval.expires_at_ms)
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.into(),
+            })?;
+        let expired = expires_at_ms <= now_ms && stored.command.is_none();
+        let should_save = if expired {
+            if let Some(approval) = &mut stored.view.approval {
+                approval.status = ApprovalStatus::Expired;
+            }
+            append_event(&mut stored.view, TaskEventType::ApprovalExpired, now_ms);
+            true
+        } else if stored.command.is_none() && stored.grant.is_none() {
+            let command = command_for(&stored, run_id, expires_at_ms)?;
+            let grant = self.policy_authority.issue(GrantRequest {
+                grant_id: command.policy_grant_id.clone(),
+                task_run_id: command.task_run_id.clone(),
+                command_id: command.command_id.clone(),
+                action: command.action.clone(),
+                expected_state_version: command.expected_state_version,
+                issued_at_ms: now_ms,
+                expires_at_ms: command.expires_at_ms,
+                rule_ids: stored.view.policy_decision.rule_ids.clone(),
+            })?;
+            if let Some(approval) = &mut stored.view.approval {
+                approval.status = ApprovalStatus::Approved;
+                approval.approved_by = Some(approved_by.into());
+                approval.approved_at_ms = Some(now_ms);
+            }
+            append_event(&mut stored.view, TaskEventType::ApprovalGranted, now_ms);
+            append_event(&mut stored.view, TaskEventType::CommandDispatched, now_ms);
+            stored.view.status = TaskRunStatus::Executing;
+            stored.command = Some(command);
+            stored.grant = Some(grant);
+            true
+        } else {
+            false
+        };
+        if should_save {
+            let stored_json = serde_json::to_string(&stored)?;
+            transaction.execute(
+                "UPDATE task_runs
+                 SET stored_json = ?1, updated_at_ms = ?2
+                 WHERE run_id = ?3",
+                params![stored_json, now_ms, run_id],
+            )?;
+        }
+        transaction.commit()?;
+        if expired {
+            return Err(TaskRuntimeError::ApprovalExpired {
+                expires_at_ms,
+                now_ms,
+            });
+        }
+        Ok(stored)
     }
 
     pub fn reconcile(

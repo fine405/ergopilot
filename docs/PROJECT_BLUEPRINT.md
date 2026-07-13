@@ -287,9 +287,9 @@ type CommandEvent = {
 }
 ```
 
-This initial event envelope is deliberately closed and JSON-tested. Progress,
-cancellation and structured error payloads extend it alongside the task runtime
-rather than entering the journal as arbitrary strings.
+This event envelope is deliberately closed and JSON-tested. Progress and
+structured error payloads extend it alongside the task runtime rather than
+entering the journal as arbitrary strings.
 
 ### 5.6 Policy decision
 
@@ -333,6 +333,7 @@ The orchestration layer exposes another small interface:
 interface TaskRuntime {
   start(task: TaskSpec): Promise<TaskRun>
   approve(runId: string, approvedBy: string, nowMs: number): Promise<TaskRunView>
+  cancel(runId: string, cancelledBy: string, nowMs: number): Promise<TaskRunView>
   reconcile(runId: string, nowMs: number): Promise<TaskRunView>
   resume(runId: string, nowMs: number): Promise<TaskRunView>
   inspect(runId: string): Promise<TaskRunView>
@@ -376,9 +377,11 @@ stateDiagram-v2
 These are target invariants for the complete MVP. The current local slice now
 enforces TaskSpec validation, grant authenticity, validity,
 task/command/action/state-precondition scope, approval ownership and expiry,
-task idempotency, stale-plan suspension and task-level reconciliation across
-both dispatch crash windows. Cancellation and compensation remain future
-slices.
+task idempotency, stale-plan suspension, task-level reconciliation across both
+dispatch crash windows, and requester-scoped cancellation before approval.
+Cancellation after command dispatch and compensation remain future slices;
+they require device-side arbitration before the runtime can promise that no
+physical action will occur.
 
 1. Every device command belongs to an existing task run.
 2. Every action command carries a non-expired policy grant.
@@ -390,8 +393,9 @@ slices.
    blind retry.
 8. Success requires post-action state verification.
 9. Compensation is not automatic if the physical state is unknown.
-10. Cancellation is a state transition with an observable result, not a UI-only
-    event.
+10. Cancellation is a durable state transition with an observable result, not
+    a UI-only event. The current implementation allows it only before approval
+    and command creation.
 
 ## 8. Error taxonomy
 

@@ -34,6 +34,10 @@ const presentation = {
     label: "Suspended",
     className: "border-status-warn/30 bg-status-warn/10 text-status-warn",
   },
+  cancelled: {
+    label: "Cancelled",
+    className: "border-muted-foreground/30 bg-muted text-muted-foreground",
+  },
 } satisfies Record<TaskRunView["status"], { label: string; className: string }>;
 
 export function StatusBadge({ status }: { status: TaskRunView["status"] }) {

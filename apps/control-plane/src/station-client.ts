@@ -18,6 +18,11 @@ export interface StationClient {
     approvedBy: string,
     nowMs: number,
   ): Promise<TaskRunView>;
+  cancelTask(
+    runId: string,
+    cancelledBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView>;
   demoApproveTaskWithAckLoss(
     runId: string,
     approvedBy: string,
@@ -44,6 +49,10 @@ type RpcRequest =
   | {
       method: "task.approve";
       params: { runId: string; approvedBy: string; nowMs: number };
+    }
+  | {
+      method: "task.cancel";
+      params: { runId: string; cancelledBy: string; nowMs: number };
     }
   | {
       method: "demo.task.approve_with_ack_loss";
@@ -136,6 +145,17 @@ export class ProcessStationClient implements StationClient {
   ): Promise<TaskRunView> {
     return this.#invoke(
       { method: "task.approve", params: { runId, approvedBy, nowMs } },
+      taskRunViewSchema,
+    );
+  }
+
+  cancelTask(
+    runId: string,
+    cancelledBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView> {
+    return this.#invoke(
+      { method: "task.cancel", params: { runId, cancelledBy, nowMs } },
       taskRunViewSchema,
     );
   }

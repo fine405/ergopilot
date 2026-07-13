@@ -95,6 +95,19 @@ const uncertainRun: TaskRunView = {
   suspensionReason: null,
 };
 
+const cancelledRun: TaskRunView = {
+  ...awaitingRun,
+  status: "cancelled",
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    status: "cancelled",
+  },
+  events: [
+    ...awaitingRun.events,
+    { sequence: 3, eventType: "run_cancelled", atMs: 1_100 },
+  ],
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
@@ -108,6 +121,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={onApproveWithAckLoss}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -134,6 +148,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={onApproveWithDeviceOffline}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -162,6 +177,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={
@@ -195,6 +211,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -222,6 +239,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -244,6 +262,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -265,6 +284,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -286,6 +306,7 @@ describe("RunOverview", () => {
         error={null}
         isMutating={false}
         onApprove={vi.fn()}
+        onCancel={vi.fn()}
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
@@ -297,5 +318,57 @@ describe("RunOverview", () => {
     expect(screen.queryByRole("button", { name: "Resume run" })).toBeNull();
     expect(screen.getByText("Suspension reason unavailable")).toBeTruthy();
     expect(screen.getByText(/Create a fresh task run/)).toBeTruthy();
+  });
+
+  it("confirms cancellation before closing a pending run", () => {
+    const onCancel = vi.fn();
+
+    render(
+      <RunOverview
+        run={awaitingRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={onCancel}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm cancellation" }),
+    );
+
+    expect(onCancel).toHaveBeenCalledWith(awaitingRun);
+  });
+
+  it("renders durable cancellation evidence without further actions", () => {
+    render(
+      <RunOverview
+        run={cancelledRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Run cancelled before dispatch")).toBeTruthy();
+    expect(screen.getByText("Run cancelled")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Review & approve" }),
+    ).toBeNull();
   });
 });

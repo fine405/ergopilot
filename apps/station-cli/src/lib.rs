@@ -73,7 +73,10 @@ impl DemoError {
                 | TaskRuntimeError::InvalidTaskSpec { .. },
             ) => "invalid_request",
             Self::Task(TaskRuntimeError::RunNotFound { .. }) => "run_not_found",
-            Self::Task(TaskRuntimeError::UnauthorizedApprover { .. }) => "forbidden",
+            Self::Task(
+                TaskRuntimeError::UnauthorizedApprover { .. }
+                | TaskRuntimeError::UnauthorizedCanceller { .. },
+            ) => "forbidden",
             Self::Task(TaskRuntimeError::TaskIdConflict { .. }) => "task_conflict",
             Self::Task(TaskRuntimeError::ApprovalExpired { .. }) => "approval_expired",
             Self::Task(TaskRuntimeError::RecoveryBudgetExhausted { .. }) => {
@@ -83,7 +86,8 @@ impl DemoError {
                 TaskRuntimeError::RunNotApprovable { .. }
                 | TaskRuntimeError::PendingCommandNotFound { .. }
                 | TaskRuntimeError::RunNotReconcilable { .. }
-                | TaskRuntimeError::RunNotResumable { .. },
+                | TaskRuntimeError::RunNotResumable { .. }
+                | TaskRuntimeError::RunNotCancellable { .. },
             ) => "invalid_transition",
             _ => "station_rpc_error",
         }
@@ -110,6 +114,15 @@ pub enum RpcRequest {
         run_id: String,
         #[serde(rename = "approvedBy")]
         approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
+    #[serde(rename = "task.cancel")]
+    CancelTask {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "cancelledBy")]
+        cancelled_by: String,
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
@@ -198,6 +211,11 @@ pub fn run_rpc(
             approved_by,
             now_ms,
         } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
+        RpcRequest::CancelTask {
+            run_id,
+            cancelled_by,
+            now_ms,
+        } => serde_json::to_value(runtime.cancel(&run_id, &cancelled_by, now_ms)?)?,
         RpcRequest::DemoApproveTaskWithAckLoss {
             run_id,
             approved_by,
