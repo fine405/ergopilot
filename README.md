@@ -29,6 +29,8 @@ runnable end to end. The current slice implements:
 - persist-before-effect execution, idempotent replay and read-after-write
   verification;
 - reconciliation across both task/command dispatch crash windows;
+- an explicit demo-only ACK-loss path that proves reconciliation does not
+  repeat a physical effect;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
 - an optional Mastra planner that converts natural language into a bounded,
@@ -67,6 +69,11 @@ Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
 matching Mastra planner providers. The provider selector shows missing-key
 providers as disabled. Without either key, the deterministic task builder and
 complete execution path remain usable.
+
+To exercise uncertain-outcome recovery in the operator console, create a
+manual task, open **Review & approve**, choose **Approve + lose ACK (demo)**,
+then click **Reconcile state**. The run moves through `outcome_unknown` to
+`completed`, while the station movement count increases only once.
 
 The deterministic CLI demos remain available:
 

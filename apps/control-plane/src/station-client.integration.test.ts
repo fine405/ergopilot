@@ -55,4 +55,48 @@ describe("ProcessStationClient", () => {
     expect(snapshot.deskHeightMm).toBe(790);
     expect(snapshot.movementCount).toBe(1);
   });
+
+  it("injects ACK loss and reconciles the real Rust runtime once", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-ack-loss-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-ack-loss",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 800 },
+          },
+        },
+      ],
+    };
+
+    const awaiting = await client.startTask(task, 1_000);
+    const uncertain = await client.demoApproveTaskWithAckLoss(
+      awaiting.runId,
+      "user-1",
+      1_100,
+    );
+    const afterEffect = await client.stationSnapshot(1_150);
+    const reconciled = await client.reconcileTask(awaiting.runId, 1_200);
+    const finalSnapshot = await client.stationSnapshot(1_250);
+
+    expect(uncertain.status).toBe("outcome_unknown");
+    expect(afterEffect.deskHeightMm).toBe(800);
+    expect(afterEffect.movementCount).toBe(1);
+    expect(reconciled.status).toBe("completed");
+    expect(finalSnapshot.movementCount).toBe(1);
+  });
 });

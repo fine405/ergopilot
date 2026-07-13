@@ -81,6 +81,21 @@ export function OperatorConsole({
       ]);
     },
   });
+  const approveWithAckLossMutation = useMutation({
+    mutationFn: (run: TaskRunView) =>
+      controlPlane.demoApproveTaskWithAckLoss(run.runId, run.task.requestedBy),
+    onSuccess: (run) => {
+      queryClient.setQueryData(["task-run", run.runId], run);
+    },
+    onSettled: async (_data, _error, run) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["task-run", run.runId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ["station-snapshot"] }),
+      ]);
+    },
+  });
   const reconcileMutation = useMutation({
     mutationFn: (run: TaskRunView) => controlPlane.reconcileTask(run.runId),
     onSuccess: (run) => {
@@ -99,10 +114,12 @@ export function OperatorConsole({
   const actionError =
     errorMessage(startMutation.error) ??
     errorMessage(approveMutation.error) ??
+    errorMessage(approveWithAckLossMutation.error) ??
     errorMessage(reconcileMutation.error);
   const isMutating =
     startMutation.isPending ||
     approveMutation.isPending ||
+    approveWithAckLossMutation.isPending ||
     reconcileMutation.isPending;
 
   return (
@@ -189,6 +206,9 @@ export function OperatorConsole({
             error={errorMessage(runQuery.error) ?? actionError}
             isMutating={isMutating}
             onApprove={(run) => approveMutation.mutate(run)}
+            onApproveWithAckLoss={(run) =>
+              approveWithAckLossMutation.mutate(run)
+            }
             onReconcile={(run) => reconcileMutation.mutate(run)}
           />
           <PlannerAttemptsCard

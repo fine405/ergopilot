@@ -82,6 +82,64 @@ fn independent_rpc_calls_share_the_durable_task_runtime() {
 }
 
 #[test]
+fn demo_ack_loss_rpc_reconciles_without_repeating_the_effect() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let task = TaskSpec::prepare_focus_session("task-rpc-ack-loss", "user-1", 790);
+
+    let started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task,
+            now_ms: 1_000,
+        },
+    );
+    let run_id = started["result"]["runId"].as_str().unwrap();
+
+    let uncertain = invoke(
+        &database,
+        &authority,
+        RpcRequest::DemoApproveTaskWithAckLoss {
+            run_id: run_id.into(),
+            approved_by: "user-1".into(),
+            now_ms: 1_100,
+        },
+    );
+    assert_eq!(uncertain["result"]["status"], "outcome_unknown");
+
+    let after_effect = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_150,
+        },
+    );
+    assert_eq!(after_effect["result"]["deskHeightMm"], 790);
+    assert_eq!(after_effect["result"]["movementCount"], 1);
+
+    let reconciled = invoke(
+        &database,
+        &authority,
+        RpcRequest::ReconcileTask {
+            run_id: run_id.into(),
+            now_ms: 1_200,
+        },
+    );
+    assert_eq!(reconciled["result"]["status"], "completed");
+
+    let final_snapshot = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_250,
+        },
+    );
+    assert_eq!(final_snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
 fn rpc_process_rejects_input_larger_than_the_protocol_limit() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("oversized.sqlite");

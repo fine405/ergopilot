@@ -20,6 +20,7 @@ const controlPlaneMock = vi.hoisted(() => ({
   startTask: vi.fn(),
   inspectTask: vi.fn(),
   approveTask: vi.fn(),
+  demoApproveTaskWithAckLoss: vi.fn(),
   reconcileTask: vi.fn(),
   stationSnapshot: vi.fn(),
 }));

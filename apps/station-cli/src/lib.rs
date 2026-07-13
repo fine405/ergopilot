@@ -78,6 +78,15 @@ pub enum RpcRequest {
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
+    #[serde(rename = "demo.task.approve_with_ack_loss")]
+    DemoApproveTaskWithAckLoss {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "approvedBy")]
+        approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
     #[serde(rename = "task.reconcile")]
     ReconcileTask {
         #[serde(rename = "runId")]
@@ -105,7 +114,10 @@ pub fn run_rpc(
     {
         fs::create_dir_all(parent)?;
     }
-    let simulator = SqliteSimulator::open(database_path)?;
+    let mut simulator = SqliteSimulator::open(database_path)?;
+    if matches!(&request, RpcRequest::DemoApproveTaskWithAckLoss { .. }) {
+        simulator.set_next_fault(NextFault::LoseReportAfterEffect);
+    }
     let mut runtime = TaskRuntime::open(database_path, simulator, authority)?;
     let result = match request {
         RpcRequest::StartTask { task, now_ms } => {
@@ -113,6 +125,11 @@ pub fn run_rpc(
         }
         RpcRequest::InspectTask { run_id } => serde_json::to_value(runtime.inspect(&run_id)?)?,
         RpcRequest::ApproveTask {
+            run_id,
+            approved_by,
+            now_ms,
+        } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
+        RpcRequest::DemoApproveTaskWithAckLoss {
             run_id,
             approved_by,
             now_ms,

@@ -47,6 +47,7 @@ interface RunOverviewProps {
   error: string | null;
   isMutating: boolean;
   onApprove: (run: TaskRunView) => void;
+  onApproveWithAckLoss: (run: TaskRunView) => void;
   onReconcile: (run: TaskRunView) => void;
 }
 
@@ -56,6 +57,7 @@ export function RunOverview({
   error,
   isMutating,
   onApprove,
+  onApproveWithAckLoss,
   onReconcile,
 }: RunOverviewProps) {
   if (isLoading && !run) {
@@ -185,6 +187,12 @@ export function RunOverview({
                   </div>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      variant="destructive"
+                      onClick={() => onApproveWithAckLoss(run)}
+                    >
+                      Approve + lose ACK (demo)
+                    </AlertDialogAction>
                     <AlertDialogAction onClick={() => onApprove(run)}>
                       Approve one motion
                     </AlertDialogAction>
