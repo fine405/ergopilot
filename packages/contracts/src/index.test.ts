@@ -128,6 +128,53 @@ describe("Task planning contract", () => {
     ).toBe(false);
   });
 
+  it("accepts a privacy-safe invalid-request attempt without provider attribution", () => {
+    expect(
+      plannerAttemptsResponseSchema.parse({
+        attempts: [
+          {
+            traceId: "plan-trace-invalid-request",
+            provider: null,
+            model: null,
+            startedAtMs: 1_000,
+            durationMs: 5,
+            outcome: "failed",
+            taskId: null,
+            errorCode: "invalid_request",
+          },
+        ],
+      }).attempts[0],
+    ).toEqual({
+      traceId: "plan-trace-invalid-request",
+      provider: null,
+      model: null,
+      startedAtMs: 1_000,
+      durationMs: 5,
+      outcome: "failed",
+      taskId: null,
+      errorCode: "invalid_request",
+    });
+  });
+
+  it("accepts an unattributed payload-limit attempt", () => {
+    expect(
+      plannerAttemptsResponseSchema.safeParse({
+        attempts: [
+          {
+            traceId: "plan-trace-payload-limit",
+            provider: null,
+            model: null,
+            startedAtMs: 1_000,
+            durationMs: 5,
+            outcome: "failed",
+            taskId: null,
+            errorCode: "payload_too_large",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it("describes configured and disabled planner providers", () => {
     expect(
       plannerProvidersResponseSchema.parse({

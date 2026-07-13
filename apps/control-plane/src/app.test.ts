@@ -4,6 +4,7 @@ import type {
   TaskSpec,
   WorkstationSnapshot,
 } from "@ergopilot/contracts";
+import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "./app";
@@ -259,6 +260,207 @@ describe("control-plane API", () => {
           outcome: "failed",
           taskId: null,
           errorCode: "invalid_plan",
+        },
+      ],
+    });
+  });
+
+  it("does not misclassify a planner HTTP error as request validation", async () => {
+    const planner: TaskPlanner = {
+      plan: vi.fn(async () => {
+        throw new HTTPException(400, { message: "planner HTTP failure" });
+      }),
+    };
+    const app = createApp(fakeStation(), { planners: { deepseek: planner } });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "Prepare a focus session",
+        requestedBy: "user-1",
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: { code: "internal_error", message: "planner HTTP failure" },
+    });
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: "deepseek",
+          model: "deepseek/deepseek-v4-flash",
+          startedAtMs: expect.any(Number),
+          durationMs: expect.any(Number),
+          outcome: "failed",
+          taskId: null,
+          errorCode: "internal_error",
+        },
+      ],
+    });
+  });
+
+  it("records an unattributed attempt when the planner provider is invalid", async () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_005);
+    const app = createApp(fakeStation(), { now });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "unknown-provider",
+        prompt: "private invalid request",
+        requestedBy: "private-user",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid_request",
+        message: "request body does not match TaskPlanRequest",
+      },
+    });
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    const body = await attemptsResponse.json();
+    expect(body).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: null,
+          model: null,
+          startedAtMs: 1_000,
+          durationMs: 5,
+          outcome: "failed",
+          taskId: null,
+          errorCode: "invalid_request",
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("private invalid request");
+    expect(JSON.stringify(body)).not.toContain("private-user");
+  });
+
+  it("attributes an invalid planner body when its provider is valid", async () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(2_000)
+      .mockReturnValueOnce(2_007);
+    const app = createApp(fakeStation(), { now });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "",
+        requestedBy: "user-1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: "deepseek",
+          model: "deepseek/deepseek-v4-flash",
+          startedAtMs: 2_000,
+          durationMs: 7,
+          outcome: "failed",
+          taskId: null,
+          errorCode: "invalid_request",
+        },
+      ],
+    });
+  });
+
+  it("records malformed planner JSON as an invalid request", async () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(3_000)
+      .mockReturnValueOnce(3_004);
+    const app = createApp(fakeStation(), { now });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: '{"provider":"deepseek"',
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid_request",
+        message: "request body does not match TaskPlanRequest",
+      },
+    });
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: null,
+          model: null,
+          startedAtMs: 3_000,
+          durationMs: 4,
+          outcome: "failed",
+          taskId: null,
+          errorCode: "invalid_request",
+        },
+      ],
+    });
+  });
+
+  it("records an oversized planner body before rejecting it", async () => {
+    const now = vi
+      .fn<() => number>()
+      .mockReturnValueOnce(4_000)
+      .mockReturnValueOnce(4_003);
+    const app = createApp(fakeStation(), { now });
+
+    const response = await app.request("/api/task-plans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "deepseek",
+        prompt: "x".repeat(70 * 1024),
+        requestedBy: "user-1",
+      }),
+    });
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "payload_too_large",
+        message: "request body exceeds 64 KiB",
+      },
+    });
+    const traceId = response.headers.get("X-ErgoPilot-Trace-Id");
+    const attemptsResponse = await app.request("/api/planner-attempts");
+    expect(await attemptsResponse.json()).toEqual({
+      attempts: [
+        {
+          traceId,
+          provider: null,
+          model: null,
+          startedAtMs: 4_000,
+          durationMs: 3,
+          outcome: "failed",
+          taskId: null,
+          errorCode: "payload_too_large",
         },
       ],
     });

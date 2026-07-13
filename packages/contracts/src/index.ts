@@ -71,7 +71,7 @@ export const plannerProvidersResponseSchema = z
   })
   .strict();
 
-export const plannerAttemptErrorCodeSchema = z.enum([
+const plannerRuntimeErrorCodeSchema = z.enum([
   "provider_unavailable",
   "generation_failed",
   "generation_timeout",
@@ -79,26 +79,50 @@ export const plannerAttemptErrorCodeSchema = z.enum([
   "internal_error",
 ]);
 
+export const plannerAttemptErrorCodeSchema = z.enum([
+  ...plannerRuntimeErrorCodeSchema.options,
+  "invalid_request",
+  "payload_too_large",
+]);
+
 const plannerAttemptBaseSchema = z
   .object({
     traceId: identifierSchema,
-    provider: plannerProviderIdSchema,
-    model: z.string().trim().min(1),
     startedAtMs: z.number().int().nonnegative(),
     durationMs: z.number().int().nonnegative(),
   })
   .strict();
 
-export const plannerAttemptSchema = z.discriminatedUnion("outcome", [
-  plannerAttemptBaseSchema.extend({
+const attributedPlannerAttemptBaseSchema = plannerAttemptBaseSchema.extend({
+  provider: plannerProviderIdSchema,
+  model: z.string().trim().min(1),
+});
+
+const failedRequestAttemptFields = {
+  outcome: z.literal("failed"),
+  taskId: z.null(),
+} as const;
+
+export const plannerAttemptSchema = z.union([
+  attributedPlannerAttemptBaseSchema.extend({
     outcome: z.literal("succeeded"),
     taskId: identifierSchema,
     errorCode: z.null(),
   }),
-  plannerAttemptBaseSchema.extend({
+  attributedPlannerAttemptBaseSchema.extend({
     outcome: z.literal("failed"),
     taskId: z.null(),
-    errorCode: plannerAttemptErrorCodeSchema,
+    errorCode: plannerRuntimeErrorCodeSchema,
+  }),
+  attributedPlannerAttemptBaseSchema.extend({
+    ...failedRequestAttemptFields,
+    errorCode: z.literal("invalid_request"),
+  }),
+  plannerAttemptBaseSchema.extend({
+    provider: z.null(),
+    model: z.null(),
+    ...failedRequestAttemptFields,
+    errorCode: z.enum(["invalid_request", "payload_too_large"]),
   }),
 ]);
 
