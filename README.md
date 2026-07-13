@@ -1,5 +1,7 @@
 # ErgoPilot
 
+**English** | [简体中文](README.zh-CN.md)
+
 ErgoPilot is a recoverable embodied-agent runtime for a simulated ergonomic
 workstation. It turns a typed work goal into a safe, observable and resumable
 workstation action while keeping policy and physical execution outside the
