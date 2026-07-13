@@ -14,6 +14,17 @@ ErgoPilot 是一个面向模拟人体工学工作站的可恢复具身 Agent 运
 
 实现计划和验收标准见 [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md)。
 
+## 演示
+
+![ErgoPilot 人体工学工作站数字孪生](docs/assets/ergopilot-workstation.jpg)
+
+下面的短演示依次展示已验证的工作站状态、Office 场景预览、限定范围的四动作审批，以及配置完成后的状态。
+
+![ErgoPilot 从场景预设到验证完成的演示](docs/assets/ergopilot-demo.gif)
+
+[打开 6 秒 MP4 演示视频](docs/assets/ergopilot-demo.mp4) ·
+[查看审批界面截图](docs/assets/ergopilot-approval.jpg)
+
 ## 当前纵向切片
 
 本地 Rust 运行时、Hono API、TanStack Start 操作台和 Tauri 桌面工作站已经可以端到端运行。当前切片实现了：

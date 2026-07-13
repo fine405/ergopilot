@@ -19,6 +19,18 @@ problem is reliable execution against fallible devices:
 The implementation plan and acceptance criteria are in
 [docs/PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md).
 
+## Demo
+
+![ErgoPilot workstation digital twin](docs/assets/ergopilot-workstation.jpg)
+
+This short walkthrough shows a verified workstation state, an Office preset
+preview, the scoped four-motion approval and the completed profile.
+
+![ErgoPilot preset-to-verified-action demo](docs/assets/ergopilot-demo.gif)
+
+[Open the 6-second MP4 walkthrough](docs/assets/ergopilot-demo.mp4) ·
+[View the approval screen](docs/assets/ergopilot-approval.jpg)
+
 ## Current vertical slice
 
 The local Rust runtime, Hono API, TanStack Start operator console and Tauri
