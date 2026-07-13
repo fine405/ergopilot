@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   type CapabilityCatalogResponse,
   capabilityCatalogResponseSchema,
   safeDeskHeightMmSchema,
+  safeLumbarSupportPercentSchema,
   schemaVersion,
   type TaskRunView,
   type TaskSpec,
@@ -116,26 +118,88 @@ export function createErgoPilotMcpServer(
         ...(durationMinutes === undefined ? {} : { durationMinutes }),
         ...(interruptionPolicy === undefined ? {} : { interruptionPolicy }),
       };
-      const run = pendingProposalRunSchema.parse(
-        await controlPlane.proposeTask({
-          schemaVersion,
-          taskId: `task-mcp-${idFactory()}`,
-          goal: "prepare_focus_session",
-          requestedBy,
-          constraints,
-          assumptions: [
-            "MCP created a proposal; explicit user approval is required before physical motion.",
-          ],
-          steps: [
-            {
-              stepId: "desk-motion-1",
-              action: {
-                type: "desk.move_to_height",
-                input: { heightMm },
-              },
+      const task: TaskSpec = {
+        schemaVersion,
+        taskId: `task-mcp-${idFactory()}`,
+        goal: "prepare_focus_session",
+        requestedBy,
+        constraints,
+        assumptions: [
+          "MCP created a proposal; explicit user approval is required before physical motion.",
+        ],
+        steps: [
+          {
+            stepId: "desk-motion-1",
+            action: {
+              type: "desk.move_to_height",
+              input: { heightMm },
             },
-          ],
-        }),
+          },
+        ],
+      };
+      const run = parsePendingProposalRun(
+        await controlPlane.proposeTask(task),
+        task,
+      );
+      return structuredResult({
+        run,
+        safetyBoundary: { approvalRequired: true, deviceMoved: false },
+      });
+    },
+  );
+
+  server.registerTool(
+    "workstation.propose_lumbar_support",
+    {
+      title: "Propose chair lumbar support",
+      description:
+        "Create a smart-chair lumbar-support task that remains pending until a person approves it in the trusted operator UI.",
+      inputSchema: {
+        levelPercent: safeLumbarSupportPercentSchema,
+        requestedBy: z.string().trim().min(1).max(128),
+        durationMinutes: z.number().int().positive().max(65_535).optional(),
+        interruptionPolicy: z.enum(["normal", "critical-only"]).optional(),
+      },
+      outputSchema: proposalResultSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({
+      levelPercent,
+      requestedBy,
+      durationMinutes,
+      interruptionPolicy,
+    }) => {
+      const constraints = {
+        ...(durationMinutes === undefined ? {} : { durationMinutes }),
+        ...(interruptionPolicy === undefined ? {} : { interruptionPolicy }),
+      };
+      const task: TaskSpec = {
+        schemaVersion,
+        taskId: `task-mcp-${idFactory()}`,
+        goal: "adjust_seated_support",
+        requestedBy,
+        constraints,
+        assumptions: [
+          "MCP created a proposal; explicit user approval is required before physical motion.",
+        ],
+        steps: [
+          {
+            stepId: "chair-lumbar-1",
+            action: {
+              type: "chair.set_lumbar_support",
+              input: { levelPercent },
+            },
+          },
+        ],
+      };
+      const run = parsePendingProposalRun(
+        await controlPlane.proposeTask(task),
+        task,
       );
       return structuredResult({
         run,
@@ -160,6 +224,14 @@ export function createErgoPilotMcpServer(
   );
 
   return server;
+}
+
+function parsePendingProposalRun(run: TaskRunView, task: TaskSpec) {
+  const parsed = pendingProposalRunSchema.parse(run);
+  if (!isDeepStrictEqual(parsed.task, task)) {
+    throw new Error("control plane returned a different proposed task");
+  }
+  return parsed;
 }
 
 function structuredResult<T extends Record<string, unknown>>(value: T) {

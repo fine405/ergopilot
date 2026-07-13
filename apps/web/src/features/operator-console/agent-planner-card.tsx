@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { presentDeviceAction } from "@/features/device-action";
 import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 const examplePrompt =
@@ -287,8 +288,8 @@ export function AgentPlannerCard({
               <Message from="assistant">
                 <MessageContent>
                   <p>
-                    Tell me the desk height and focus session you want. I will
-                    produce a typed plan first;{" "}
+                    Tell me the desk height or lumbar support you want. I will
+                    produce one typed action first;{" "}
                     <strong>nothing moves during planning</strong>.
                   </p>
                 </MessageContent>
@@ -368,6 +369,9 @@ function ChatTurnMessage({
   startDisabled,
   onStart,
 }: ChatTurnMessageProps) {
+  const action = turn.plan?.task.steps[0].action;
+  const presentation = action ? presentDeviceAction(action) : undefined;
+
   return (
     <>
       <Message from="user">
@@ -402,16 +406,14 @@ function ChatTurnMessage({
         <Message from="assistant">
           <MessageContent className="w-full rounded-lg border bg-card p-3">
             <p className="text-sm">
-              I prepared one protected desk motion. Review the typed TaskSpec
-              before creating a durable run.
+              I prepared one protected workstation motion. Review the typed
+              TaskSpec before creating a durable run.
             </p>
             <Task>
               <TaskTrigger title="Generated TaskSpec" />
               <TaskContent>
                 <TaskItem className="font-mono text-foreground">
-                  desk.move_to_height ·{" "}
-                  {turn.plan.task.steps[0].action.input.heightMm}
-                  mm
+                  {presentation?.capabilityId} · {presentation?.target}
                 </TaskItem>
                 <TaskItem>
                   Focus duration: {turn.plan.task.constraints.durationMinutes}{" "}
@@ -478,7 +480,7 @@ function RunConfirmationMessage({
   onCancel,
 }: RunConfirmationMessageProps) {
   const approvalId = run.approval?.approvalId;
-  const targetHeightMm = run.task.steps[0].action.input.heightMm;
+  const presentation = presentDeviceAction(run.task.steps[0].action);
 
   if (
     run.status === "awaiting_approval" &&
@@ -493,13 +495,12 @@ function RunConfirmationMessage({
             state="approval-requested"
           >
             <ConfirmationTitle>
-              Device action · desk.move_to_height
+              Device action · {presentation.capabilityId}
             </ConfirmationTitle>
             <ConfirmationRequest>
               <p className="text-sm">
-                The runtime is ready to move the simulated desk to{" "}
-                <span className="font-mono">{targetHeightMm} mm</span>. This
-                approval is scoped to one run and one exact command.
+                {presentation.approvalSummary} This approval is scoped to one
+                run and one exact command.
               </p>
             </ConfirmationRequest>
             <ConfirmationActions className="w-full justify-stretch">
@@ -547,7 +548,7 @@ function RunConfirmationMessage({
                 />
                 <span>
                   Approved and verified at{" "}
-                  <span className="font-mono">{targetHeightMm} mm</span>.
+                  <span className="font-mono">{presentation.target}</span>.
                 </span>
               </div>
             </ConfirmationAccepted>
@@ -587,11 +588,8 @@ function RunConfirmationMessage({
         <MessageContent className="w-full">
           <Alert>
             <WandSparkles />
-            <AlertTitle>Desk motion executing</AlertTitle>
-            <AlertDescription>
-              Progress is streamed from the Rust device adapter, not inferred by
-              the model.
-            </AlertDescription>
+            <AlertTitle>{presentation.executionTitle}</AlertTitle>
+            <AlertDescription>{presentation.executionSummary}</AlertDescription>
             {latestProgress && (
               <MotionProgress className="mt-2" progress={latestProgress} />
             )}

@@ -43,6 +43,25 @@ fn device_command_has_a_stable_cross_runtime_json_contract() {
 }
 
 #[test]
+fn chair_lumbar_action_has_a_stable_cross_runtime_json_contract() {
+    let action = DeviceAction::ChairSetLumbarSupport { level_percent: 65 };
+
+    let json_value = serde_json::to_value(&action).unwrap();
+
+    assert_eq!(
+        json_value,
+        json!({
+            "type": "chair.set_lumbar_support",
+            "input": { "levelPercent": 65 }
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<DeviceAction>(json_value).unwrap(),
+        action
+    );
+}
+
+#[test]
 fn signed_policy_grant_has_a_stable_json_contract() {
     let grant = PolicyGrant {
         schema_version: SCHEMA_VERSION,

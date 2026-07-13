@@ -17,7 +17,25 @@ fn command(expected_state_version: u64) -> DeviceCommand {
     }
 }
 
+fn lumbar_command(expected_state_version: u64) -> DeviceCommand {
+    DeviceCommand {
+        schema_version: SCHEMA_VERSION,
+        command_id: "cmd-lumbar-recovery-1".into(),
+        task_run_id: "run-lumbar-recovery-1".into(),
+        action: DeviceAction::ChairSetLumbarSupport { level_percent: 65 },
+        expected_state_version,
+        idempotency_key: "run-lumbar-recovery-1:chair:step-1".into(),
+        expires_at_ms: 10_000,
+        trace_id: "trace-lumbar-recovery-1".into(),
+        policy_grant_id: "grant-lumbar-recovery-1".into(),
+    }
+}
+
 fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGrant {
+    let rule_id = match &command.action {
+        DeviceAction::DeskMoveToHeight { .. } => "desk.motion.requires_approval",
+        DeviceAction::ChairSetLumbarSupport { .. } => "chair.lumbar.requires_approval",
+    };
     authority
         .issue(GrantRequest {
             grant_id: command.policy_grant_id.clone(),
@@ -27,7 +45,7 @@ fn grant_for(authority: &PolicyAuthority, command: &DeviceCommand) -> PolicyGran
             expected_state_version: command.expected_state_version,
             issued_at_ms: 1_000,
             expires_at_ms: 10_000,
-            rule_ids: vec!["desk.motion.requires_approval".into()],
+            rule_ids: vec![rule_id.into()],
         })
         .unwrap()
 }
@@ -64,4 +82,48 @@ fn restart_reconciles_an_effect_that_happened_before_the_terminal_ack() {
     let replay = restarted_process.execute(command, &grant, 1_300).unwrap();
     assert!(replay.was_replayed);
     assert_eq!(restarted_process.snapshot(1_301).unwrap().movement_count, 1);
+}
+
+#[test]
+fn restart_reconciles_lumbar_effect_without_repeating_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    let initial = simulator.snapshot(1_000).unwrap();
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let command = lumbar_command(initial.state_version);
+    let grant = grant_for(&authority, &command);
+    simulator.set_next_fault(NextFault::LoseReportAfterEffect);
+    let mut first_process =
+        StationRuntime::open(&database, simulator, authority.verifier()).unwrap();
+
+    let uncertain = first_process
+        .execute(command.clone(), &grant, 1_100)
+        .unwrap();
+    assert_eq!(uncertain.status, CommandStatus::OutcomeUnknown);
+    drop(first_process);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted_process =
+        StationRuntime::open(&database, simulator, authority.verifier()).unwrap();
+    let recovered = restarted_process.reconcile_pending(1_200).unwrap();
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].status, CommandStatus::Succeeded);
+    assert_eq!(
+        recovered[0]
+            .outcome
+            .as_ref()
+            .unwrap()
+            .lumbar_support_percent,
+        65
+    );
+
+    let replay = restarted_process.execute(command, &grant, 1_300).unwrap();
+    assert!(replay.was_replayed);
+    let snapshot = restarted_process.snapshot(1_301).unwrap();
+    assert_eq!(snapshot.lumbar_support_percent, 65);
+    assert_eq!(snapshot.desk_height_mm, 720);
+    assert_eq!(snapshot.movement_count, 1);
 }

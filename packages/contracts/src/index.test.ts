@@ -10,7 +10,9 @@ import {
   taskPlanResponseSchema,
   taskRunViewSchema,
   taskSpecSchema,
+  verifiedOutcomeSchema,
   workstationCapabilityCatalog,
+  workstationSnapshotSchema,
 } from "./index";
 
 describe("Device capability catalog", () => {
@@ -43,6 +45,27 @@ describe("Device capability catalog", () => {
             observedField: "deskHeightMm",
           },
         }),
+        expect.objectContaining({
+          id: "chair.set_lumbar_support",
+          mode: "action",
+          risk: "motion",
+          cancelable: false,
+          approval: { required: true },
+          inputSchema: expect.objectContaining({
+            required: ["levelPercent"],
+            properties: {
+              levelPercent: {
+                type: "integer",
+                minimum: 0,
+                maximum: 100,
+              },
+            },
+          }),
+          verification: {
+            strategy: "read_after_write",
+            observedField: "lumbarSupportPercent",
+          },
+        }),
       ],
     });
   });
@@ -68,7 +91,10 @@ describe("TaskSpec contract", () => {
       ],
     });
 
-    expect(task.steps[0]?.action.input.heightMm).toBe(780);
+    expect(task.steps[0]?.action).toEqual({
+      type: "desk.move_to_height",
+      input: { heightMm: 780 },
+    });
   });
 
   it("rejects an unversioned or empty plan before it reaches Rust", () => {
@@ -82,6 +108,51 @@ describe("TaskSpec contract", () => {
         steps: [],
       }),
     ).toThrow();
+  });
+
+  it("matches the smart-chair lumbar action accepted by Rust", () => {
+    const task = taskSpecSchema.parse({
+      schemaVersion: 1,
+      taskId: "task-chair-1",
+      goal: "adjust_seated_support",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    });
+
+    expect(task.steps[0]?.action).toEqual({
+      type: "chair.set_lumbar_support",
+      input: { levelPercent: 65 },
+    });
+  });
+
+  it("upgrades schema-v1 station observations with default lumbar support", () => {
+    expect(
+      workstationSnapshotSchema.parse({
+        schemaVersion: 1,
+        stationId: "station-legacy-1",
+        stateVersion: 4,
+        observedAtMs: 1_000,
+        deskHeightMm: 720,
+        movementCount: 2,
+      }).lumbarSupportPercent,
+    ).toBe(35);
+    expect(
+      verifiedOutcomeSchema.parse({
+        stateVersion: 4,
+        deskHeightMm: 720,
+        verifiedAtMs: 1_000,
+      }).lumbarSupportPercent,
+    ).toBe(35);
   });
 
   it("rejects values that exceed the Rust and process boundaries", () => {
@@ -263,12 +334,35 @@ describe("Task planning contract", () => {
     });
     expect(
       taskPlanDraftSchema.parse({
+        action: "desk.move_to_height",
         targetHeightMm: 780,
         durationMinutes: 45,
         interruptionPolicy: "critical-only",
         assumptions: ["Desk movement area is clear"],
-      }).targetHeightMm,
-    ).toBe(780);
+      }),
+    ).toEqual({
+      action: "desk.move_to_height",
+      targetHeightMm: 780,
+      durationMinutes: 45,
+      interruptionPolicy: "critical-only",
+      assumptions: ["Desk movement area is clear"],
+    });
+
+    expect(
+      taskPlanDraftSchema.parse({
+        action: "chair.set_lumbar_support",
+        lumbarSupportPercent: 65,
+        durationMinutes: 30,
+        interruptionPolicy: "normal",
+        assumptions: ["The user is seated"],
+      }),
+    ).toEqual({
+      action: "chair.set_lumbar_support",
+      lumbarSupportPercent: 65,
+      durationMinutes: 30,
+      interruptionPolicy: "normal",
+      assumptions: ["The user is seated"],
+    });
   });
 
   it("rejects oversized prompts and unsafe generated desk heights", () => {
@@ -280,9 +374,19 @@ describe("Task planning contract", () => {
     ).toBe(false);
     expect(
       taskPlanDraftSchema.safeParse({
+        action: "desk.move_to_height",
         targetHeightMm: 1_400,
         durationMinutes: 45,
         interruptionPolicy: "critical-only",
+        assumptions: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      taskPlanDraftSchema.safeParse({
+        action: "chair.set_lumbar_support",
+        lumbarSupportPercent: 101,
+        durationMinutes: 45,
+        interruptionPolicy: "normal",
         assumptions: [],
       }).success,
     ).toBe(false);
@@ -322,6 +426,26 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
+  it("carries bounded lumbar telemetry from the station owner", () => {
+    const snapshot = workstationSnapshotSchema.parse({
+      schemaVersion: 1,
+      stationId: "station-sim-1",
+      stateVersion: 2,
+      observedAtMs: 1_100,
+      deskHeightMm: 720,
+      lumbarSupportPercent: 65,
+      movementCount: 1,
+    });
+
+    expect(snapshot.lumbarSupportPercent).toBe(65);
+    expect(
+      workstationSnapshotSchema.safeParse({
+        ...snapshot,
+        lumbarSupportPercent: 101,
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts ordered desk motion progress from the station runtime", () => {
     const progress = [
       {

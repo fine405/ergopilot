@@ -25,6 +25,7 @@ describe("ErgoPilot MCP server", () => {
       "workstation.list_capabilities",
       "workstation.get_state",
       "workstation.propose_desk_motion",
+      "workstation.propose_lumbar_support",
       "workstation.inspect_run",
     ]);
     expect(tools.some((tool) => tool.name.includes("approve"))).toBe(false);
@@ -105,6 +106,49 @@ describe("ErgoPilot MCP server", () => {
     expect(controlPlane.getState).not.toHaveBeenCalled();
   });
 
+  it("creates a pending lumbar proposal without moving or approving the chair", async () => {
+    const controlPlane = fakeControlPlane();
+    vi.mocked(controlPlane.proposeTask).mockImplementation(async (task) =>
+      createAwaitingApprovalRun(task),
+    );
+    const client = await connectClient(controlPlane);
+
+    const result = await client.callTool({
+      name: "workstation.propose_lumbar_support",
+      arguments: {
+        levelPercent: 65,
+        requestedBy: "agent-user",
+        durationMinutes: 30,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      run: { status: "awaiting_approval" },
+      safetyBoundary: { approvalRequired: true, deviceMoved: false },
+    });
+    expect(controlPlane.proposeTask).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      taskId: "task-mcp-fixed-id",
+      goal: "adjust_seated_support",
+      requestedBy: "agent-user",
+      constraints: { durationMinutes: 30 },
+      assumptions: [
+        "MCP created a proposal; explicit user approval is required before physical motion.",
+      ],
+      steps: [
+        {
+          stepId: "chair-lumbar-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    });
+    expect(controlPlane.getState).not.toHaveBeenCalled();
+  });
+
   it("reads station-owned device state", async () => {
     const controlPlane = fakeControlPlane();
     const snapshot: WorkstationSnapshot = {
@@ -113,6 +157,7 @@ describe("ErgoPilot MCP server", () => {
       stateVersion: 7,
       observedAtMs: 1_200,
       deskHeightMm: 720,
+      lumbarSupportPercent: 35,
       movementCount: 3,
     };
     vi.mocked(controlPlane.getState).mockResolvedValue(snapshot);
@@ -168,6 +213,19 @@ describe("ErgoPilot MCP server", () => {
     expect(controlPlane.proposeTask).not.toHaveBeenCalled();
   });
 
+  it("rejects unsafe lumbar levels before reaching the control plane", async () => {
+    const controlPlane = fakeControlPlane();
+    const client = await connectClient(controlPlane);
+
+    const result = await client.callTool({
+      name: "workstation.propose_lumbar_support",
+      arguments: { levelPercent: 101, requestedBy: "agent-user" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(controlPlane.proposeTask).not.toHaveBeenCalled();
+  });
+
   it("rejects a control-plane response that crossed the approval boundary", async () => {
     const controlPlane = fakeControlPlane();
     vi.mocked(controlPlane.proposeTask).mockImplementation(async (task) => ({
@@ -179,6 +237,32 @@ describe("ErgoPilot MCP server", () => {
     const result = await client.callTool({
       name: "workstation.propose_desk_motion",
       arguments: { heightMm: 780, requestedBy: "agent-user" },
+    });
+
+    expect(result.isError).toBe(true);
+  });
+
+  it("rejects a pending response for a different proposed chair action", async () => {
+    const controlPlane = fakeControlPlane();
+    vi.mocked(controlPlane.proposeTask).mockImplementation(async (task) =>
+      createAwaitingApprovalRun({
+        ...task,
+        steps: [
+          {
+            stepId: "chair-lumbar-1",
+            action: {
+              type: "chair.set_lumbar_support",
+              input: { levelPercent: 66 },
+            },
+          },
+        ],
+      }),
+    );
+    const client = await connectClient(controlPlane);
+
+    const result = await client.callTool({
+      name: "workstation.propose_lumbar_support",
+      arguments: { levelPercent: 65, requestedBy: "agent-user" },
     });
 
     expect(result.isError).toBe(true);

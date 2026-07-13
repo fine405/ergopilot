@@ -41,6 +41,7 @@ impl ApplyFailureDevice {
                 state_version: 1,
                 observed_at_ms: 0,
                 desk_height_mm: 720,
+                lumbar_support_percent: 35,
                 movement_count: 0,
             },
         }
@@ -71,6 +72,7 @@ impl ReadbackFailureDevice {
                 state_version: 1,
                 observed_at_ms: 0,
                 desk_height_mm: 720,
+                lumbar_support_percent: 35,
                 movement_count: 0,
             },
             fail_next_snapshot: false,
@@ -93,7 +95,14 @@ impl DeviceAdapter for ReadbackFailureDevice {
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
         assert_eq!(self.snapshot.state_version, expected_state_version);
-        self.snapshot.desk_height_mm = action.target_height_mm();
+        match action {
+            DeviceAction::DeskMoveToHeight { height_mm } => {
+                self.snapshot.desk_height_mm = *height_mm;
+            }
+            DeviceAction::ChairSetLumbarSupport { level_percent } => {
+                self.snapshot.lumbar_support_percent = *level_percent;
+            }
+        }
         self.snapshot.state_version += 1;
         self.snapshot.movement_count += 1;
         self.fail_next_snapshot = true;

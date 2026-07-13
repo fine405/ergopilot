@@ -98,7 +98,13 @@ export function StationCard({
                 style={{ width: `${position}%` }}
               />
             </div>
-            <dl className="grid grid-cols-2 gap-3">
+            <dl className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <dt className="text-xs text-muted-foreground">Lumbar</dt>
+                <dd className="mt-1 font-mono text-sm">
+                  {snapshot.lumbarSupportPercent}%
+                </dd>
+              </div>
               <div className="rounded-lg border bg-muted/30 p-3">
                 <dt className="text-xs text-muted-foreground">State version</dt>
                 <dd className="mt-1 font-mono text-sm">

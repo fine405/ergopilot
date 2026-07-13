@@ -123,6 +123,7 @@ beforeEach(() => {
     stateVersion: 1,
     observedAtMs: 1_000,
     deskHeightMm: 720,
+    lumbarSupportPercent: 35,
     movementCount: 0,
   });
   controlPlaneMock.planTask.mockResolvedValue(plannedTask);
@@ -233,6 +234,7 @@ describe("OperatorConsole", () => {
         stateVersion: 1,
         observedAtMs: 1_500,
         deskHeightMm: 755,
+        lumbarSupportPercent: 35,
         movementCount: 1,
       },
     });

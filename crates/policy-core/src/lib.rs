@@ -1,6 +1,6 @@
 use ergopilot_protocol::{
     DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant, PolicyOutcome, MAX_DESK_HEIGHT_MM,
-    MIN_DESK_HEIGHT_MM, SCHEMA_VERSION,
+    MAX_LUMBAR_SUPPORT_PERCENT, MIN_DESK_HEIGHT_MM, MIN_LUMBAR_SUPPORT_PERCENT, SCHEMA_VERSION,
 };
 use hmac::{Hmac, Mac};
 use serde::Serialize;
@@ -98,6 +98,21 @@ impl PolicyAuthority {
             DeviceAction::DeskMoveToHeight { .. } => PolicyDecision {
                 outcome: PolicyOutcome::RequireApproval,
                 rule_ids: vec!["desk.motion.requires_approval".into()],
+                reason_code: None,
+            },
+            DeviceAction::ChairSetLumbarSupport { level_percent }
+                if !(MIN_LUMBAR_SUPPORT_PERCENT..=MAX_LUMBAR_SUPPORT_PERCENT)
+                    .contains(level_percent) =>
+            {
+                PolicyDecision {
+                    outcome: PolicyOutcome::Deny,
+                    rule_ids: vec!["chair.lumbar.safe_envelope".into()],
+                    reason_code: Some("lumbar_support_out_of_range".into()),
+                }
+            }
+            DeviceAction::ChairSetLumbarSupport { .. } => PolicyDecision {
+                outcome: PolicyOutcome::RequireApproval,
+                rule_ids: vec!["chair.lumbar.requires_approval".into()],
                 reason_code: None,
             },
         }

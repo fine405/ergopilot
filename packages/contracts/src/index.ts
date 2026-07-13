@@ -8,6 +8,14 @@ export const safeDeskHeightMmSchema = z
   .int()
   .min(minimumDeskHeightMm)
   .max(maximumDeskHeightMm);
+export const minimumLumbarSupportPercent = 0 as const;
+export const maximumLumbarSupportPercent = 100 as const;
+export const defaultLumbarSupportPercent = 35 as const;
+export const safeLumbarSupportPercentSchema = z
+  .number()
+  .int()
+  .min(minimumLumbarSupportPercent)
+  .max(maximumLumbarSupportPercent);
 
 const identifierSchema = z
   .string()
@@ -100,22 +108,62 @@ export const workstationCapabilityCatalog =
           observedField: "deskHeightMm",
         },
       },
+      {
+        schemaVersion,
+        id: "chair.set_lumbar_support",
+        title: "Adjust smart-chair lumbar support",
+        mode: "action",
+        risk: "motion",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["levelPercent"],
+          properties: {
+            levelPercent: {
+              type: "integer",
+              minimum: minimumLumbarSupportPercent,
+              maximum: maximumLumbarSupportPercent,
+            },
+          },
+        },
+        timeoutMs: 2_000,
+        cancelable: false,
+        preconditions: ["station.online", "station.snapshot_fresh"],
+        approval: { required: true },
+        verification: {
+          strategy: "read_after_write",
+          observedField: "lumbarSupportPercent",
+        },
+      },
     ],
   });
 
-export const deviceActionSchema = z
-  .object({
-    type: z.literal("desk.move_to_height"),
-    input: z
-      .object({
-        heightMm: z.number().int().min(0).max(65_535),
-      })
-      .strict(),
-  })
-  .strict();
+export const deviceActionSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("desk.move_to_height"),
+      input: z
+        .object({
+          heightMm: z.number().int().min(0).max(65_535),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("chair.set_lumbar_support"),
+      input: z
+        .object({
+          levelPercent: z.number().int().min(0).max(255),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
 export const taskGoalSchema = z.enum([
   "prepare_focus_session",
+  "adjust_seated_support",
   "relieve_neck_discomfort",
   "restore_profile",
 ]);
@@ -232,14 +280,28 @@ export const taskPlanRequestSchema = z
   })
   .strict();
 
-export const taskPlanDraftSchema = z
-  .object({
-    targetHeightMm: safeDeskHeightMmSchema,
-    durationMinutes: z.number().int().min(15).max(180),
-    interruptionPolicy: z.enum(["normal", "critical-only"]),
-    assumptions: z.array(assumptionSchema).max(8),
-  })
-  .strict();
+const taskPlanDraftFields = {
+  durationMinutes: z.number().int().min(15).max(180),
+  interruptionPolicy: z.enum(["normal", "critical-only"]),
+  assumptions: z.array(assumptionSchema).max(8),
+};
+
+export const taskPlanDraftSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("desk.move_to_height"),
+      targetHeightMm: safeDeskHeightMmSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("chair.set_lumbar_support"),
+      lumbarSupportPercent: safeLumbarSupportPercentSchema,
+      ...taskPlanDraftFields,
+    })
+    .strict(),
+]);
 
 export const taskPlanResponseSchema = z
   .object({
@@ -276,6 +338,9 @@ export const verifiedOutcomeSchema = z
   .object({
     stateVersion: z.number().int().nonnegative(),
     deskHeightMm: z.number().int().nonnegative(),
+    lumbarSupportPercent: safeLumbarSupportPercentSchema.default(
+      defaultLumbarSupportPercent,
+    ),
     verifiedAtMs: z.number().int().nonnegative(),
   })
   .strict();
@@ -447,6 +512,9 @@ export const workstationSnapshotSchema = z
     stateVersion: z.number().int().nonnegative(),
     observedAtMs: z.number().int().nonnegative(),
     deskHeightMm: z.number().int().nonnegative(),
+    lumbarSupportPercent: safeLumbarSupportPercentSchema.default(
+      defaultLumbarSupportPercent,
+    ),
     movementCount: z.number().int().nonnegative(),
   })
   .strict();

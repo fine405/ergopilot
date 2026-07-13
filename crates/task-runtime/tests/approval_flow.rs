@@ -48,6 +48,40 @@ fn approval_resumes_the_same_run_and_completes_the_device_action() {
 }
 
 #[test]
+fn lumbar_motion_waits_for_approval_then_persists_verified_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut runtime = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let spec = TaskSpec::adjust_seated_support("task-lumbar-1", "user-1", 65);
+
+    let awaiting = runtime.start(spec, 1_000).unwrap();
+    let before = runtime.station_snapshot(1_001).unwrap();
+    let completed = runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+    let after = runtime.station_snapshot(1_101).unwrap();
+
+    assert_eq!(awaiting.status, TaskRunStatus::AwaitingApproval);
+    assert_eq!(before.lumbar_support_percent, 35);
+    assert_eq!(before.movement_count, 0);
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    assert!(completed.desk_motion_progress.is_empty());
+    assert_eq!(
+        completed
+            .command
+            .as_ref()
+            .unwrap()
+            .outcome
+            .as_ref()
+            .unwrap()
+            .lumbar_support_percent,
+        65
+    );
+    assert_eq!(after.lumbar_support_percent, 65);
+    assert_eq!(after.desk_height_mm, 720);
+    assert_eq!(after.movement_count, 1);
+}
+
+#[test]
 fn desk_motion_progress_is_ordered_and_survives_restart() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");

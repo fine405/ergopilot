@@ -123,9 +123,58 @@ const executingRun: TaskRunView = {
   ],
 };
 
+const awaitingChairRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-web-chair",
+  taskId: "task-web-chair",
+  task: {
+    ...awaitingRun.task,
+    taskId: "task-web-chair",
+    goal: "adjust_seated_support",
+    steps: [
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: ["chair.lumbar.requires_approval"],
+    reasonCode: null,
+  },
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
+  it("shows the selected chair capability and exact lumbar target", () => {
+    render(
+      <RunOverview
+        run={awaitingChairRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Seated support")).toBeTruthy();
+    expect(screen.getByText("65%")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review & approve" }));
+    expect(screen.getByText("Authorize chair lumbar support?")).toBeTruthy();
+    expect(screen.getByText(/target level 65%/)).toBeTruthy();
+  });
+
   it("shows durable Rust motion progress", () => {
     render(
       <RunOverview

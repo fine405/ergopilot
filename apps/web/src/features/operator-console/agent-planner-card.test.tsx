@@ -68,6 +68,30 @@ const plan: TaskPlanResponse = {
   },
 };
 
+const chairPlan: TaskPlanResponse = {
+  task: {
+    schemaVersion: 1,
+    taskId: "task-agent-chair-ui-1",
+    goal: "adjust_seated_support",
+    requestedBy: "demo-user",
+    constraints: {
+      durationMinutes: 30,
+      interruptionPolicy: "normal",
+    },
+    assumptions: ["The user is seated"],
+    steps: [
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  planner: plan.planner,
+};
+
 const awaitingRun: TaskRunView = {
   runId: "run-agent-chat-1",
   taskId: plan.task.taskId,
@@ -103,6 +127,22 @@ const completedRun: TaskRunView = {
     status: "approved",
     approvedBy: "demo-user",
     approvedAtMs: 2_000,
+  },
+};
+
+const awaitingChairRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-agent-chair-chat-1",
+  taskId: chairPlan.task.taskId,
+  task: chairPlan.task,
+  approval: awaitingRun.approval && {
+    ...awaitingRun.approval,
+    approvalId: "approval-agent-chair-chat-1",
+  },
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: ["chair.lumbar.requires_approval"],
+    reasonCode: null,
   },
 };
 
@@ -215,8 +255,37 @@ describe("AgentPlannerCard", () => {
     expect(
       await screen.findByRole("button", { name: "Create protected run" }),
     ).toBeTruthy();
-    expect(screen.getByText("desk.move_to_height · 790mm")).toBeTruthy();
+    expect(screen.getByText("desk.move_to_height · 790 mm")).toBeTruthy();
     expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("presents a chair plan and its exact approval scope", async () => {
+    const onGenerate = vi.fn(async () => chairPlan);
+    const onStart = vi.fn(async () => awaitingChairRun);
+    const view = renderPlanner({ onGenerate, onStart });
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(
+      await screen.findByText("chair.set_lumbar_support · 65%"),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create protected run" }),
+    );
+    await waitFor(() => expect(onStart).toHaveBeenCalledWith(chairPlan.task));
+
+    view.rerender(
+      <AgentPlannerCard
+        {...defaultProps}
+        run={awaitingChairRun}
+        onGenerate={onGenerate}
+        onStart={onStart}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Device action · chair.set_lumbar_support"),
+    ).toBeTruthy();
+    expect(screen.getByText(/lumbar support to/).textContent).toContain("65%");
   });
 
   it("keeps planning failures attached to their original chat turns", async () => {

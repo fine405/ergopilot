@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { presentDeviceAction } from "@/features/device-action";
 import { MotionProgress } from "@/features/workstation-motion/motion-progress";
 
 import { RunTimeline } from "./run-timeline";
@@ -99,7 +100,7 @@ export function RunOverview({
     );
   }
 
-  const targetHeight = run.task.steps[0].action.input.heightMm;
+  const presentation = presentDeviceAction(run.task.steps[0].action);
   const approvalPending =
     run.status === "awaiting_approval" && run.approval?.status === "pending";
   const canReconcile = run.status === "outcome_unknown";
@@ -137,8 +138,8 @@ export function RunOverview({
         </CardHeader>
         <CardContent className="space-y-5">
           <dl className="grid gap-3 sm:grid-cols-3">
-            <Metric label="Goal" value="Focus session" />
-            <Metric label="Target" value={`${targetHeight} mm`} mono />
+            <Metric label="Goal" value={presentation.goal} />
+            <Metric label="Target" value={presentation.target} mono />
             <Metric
               label="Duration"
               value={`${run.task.constraints.durationMinutes ?? "—"} min`}
@@ -180,8 +181,7 @@ export function RunOverview({
                     Physical motion requires approval
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    Move the simulated desk from its current state to{" "}
-                    {targetHeight} mm.
+                    {presentation.pendingSummary}
                   </p>
                 </div>
               </div>
@@ -221,11 +221,11 @@ export function RunOverview({
                   <AlertDialogContent>
                     <AlertDialogHeader>
                       <AlertDialogTitle>
-                        Authorize desk motion?
+                        {presentation.authorizationTitle}
                       </AlertDialogTitle>
                       <AlertDialogDescription>
                         This grant is scoped to run {run.runId}, its exact
-                        command, target height {targetHeight} mm, and the state
+                        command, {presentation.scopeTarget}, and the state
                         version used by the plan. It cannot authorize a
                         different movement.
                       </AlertDialogDescription>
@@ -336,8 +336,8 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
         <ShieldCheck className="text-status-ok" />
         <AlertTitle>Verified completion</AlertTitle>
         <AlertDescription>
-          The runtime read the device state after execution and observed the
-          requested desk height.
+          The runtime read the device state after execution and observed the{" "}
+          {presentDeviceAction(run.task.steps[0].action).verifiedState}.
         </AlertDescription>
       </Alert>
     );

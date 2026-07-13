@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 pub const SCHEMA_VERSION: u16 = 1;
 pub const MIN_DESK_HEIGHT_MM: u16 = 620;
 pub const MAX_DESK_HEIGHT_MM: u16 = 1_280;
+pub const MIN_LUMBAR_SUPPORT_PERCENT: u8 = 0;
+pub const MAX_LUMBAR_SUPPORT_PERCENT: u8 = 100;
+pub const DEFAULT_LUMBAR_SUPPORT_PERCENT: u8 = 35;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "input")]
@@ -12,18 +15,41 @@ pub enum DeviceAction {
         #[serde(rename = "heightMm")]
         height_mm: u16,
     },
+    #[serde(rename = "chair.set_lumbar_support")]
+    ChairSetLumbarSupport {
+        #[serde(rename = "levelPercent")]
+        level_percent: u8,
+    },
 }
 
 impl DeviceAction {
     pub fn capability_id(&self) -> &'static str {
         match self {
             Self::DeskMoveToHeight { .. } => "desk.move_to_height",
+            Self::ChairSetLumbarSupport { .. } => "chair.set_lumbar_support",
         }
     }
 
-    pub fn target_height_mm(&self) -> u16 {
+    pub fn target_height_mm(&self) -> Option<u16> {
         match self {
-            Self::DeskMoveToHeight { height_mm } => *height_mm,
+            Self::DeskMoveToHeight { height_mm } => Some(*height_mm),
+            Self::ChairSetLumbarSupport { .. } => None,
+        }
+    }
+
+    pub fn target_lumbar_support_percent(&self) -> Option<u8> {
+        match self {
+            Self::DeskMoveToHeight { .. } => None,
+            Self::ChairSetLumbarSupport { level_percent } => Some(*level_percent),
+        }
+    }
+
+    pub fn is_satisfied_by(&self, snapshot: &WorkstationSnapshot) -> bool {
+        match self {
+            Self::DeskMoveToHeight { height_mm } => snapshot.desk_height_mm == *height_mm,
+            Self::ChairSetLumbarSupport { level_percent } => {
+                snapshot.lumbar_support_percent == *level_percent
+            }
         }
     }
 }
@@ -81,6 +107,8 @@ pub struct WorkstationSnapshot {
     pub state_version: u64,
     pub observed_at_ms: u64,
     pub desk_height_mm: u16,
+    #[serde(default = "default_lumbar_support_percent")]
+    pub lumbar_support_percent: u8,
     pub movement_count: u64,
 }
 
@@ -115,7 +143,13 @@ impl CommandStatus {
 pub struct VerifiedOutcome {
     pub state_version: u64,
     pub desk_height_mm: u16,
+    #[serde(default = "default_lumbar_support_percent")]
+    pub lumbar_support_percent: u8,
     pub verified_at_ms: u64,
+}
+
+const fn default_lumbar_support_percent() -> u8 {
+    DEFAULT_LUMBAR_SUPPORT_PERCENT
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

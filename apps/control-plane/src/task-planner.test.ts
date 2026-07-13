@@ -5,6 +5,7 @@ import { PlannerError, StructuredTaskPlanner } from "./task-planner";
 describe("StructuredTaskPlanner", () => {
   it("turns a bounded model draft into the exact runtime TaskSpec", async () => {
     const generateDraft = vi.fn(async () => ({
+      action: "desk.move_to_height",
       targetHeightMm: 790,
       durationMinutes: 50,
       interruptionPolicy: "critical-only",
@@ -56,9 +57,59 @@ describe("StructuredTaskPlanner", () => {
     });
   });
 
+  it("maps a lumbar-support draft to the chair runtime capability", async () => {
+    const planner = new StructuredTaskPlanner({
+      generateDraft: async () => ({
+        action: "chair.set_lumbar_support",
+        lumbarSupportPercent: 65,
+        durationMinutes: 30,
+        interruptionPolicy: "normal",
+        assumptions: ["The user is seated"],
+      }),
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      createTaskId: () => "task-agent-chair-1",
+    });
+
+    await expect(
+      planner.plan({
+        provider: "deepseek",
+        prompt: "My lower back feels unsupported. Increase the lumbar support.",
+        requestedBy: "user-1",
+      }),
+    ).resolves.toEqual({
+      task: {
+        schemaVersion: 1,
+        taskId: "task-agent-chair-1",
+        goal: "adjust_seated_support",
+        requestedBy: "user-1",
+        constraints: {
+          durationMinutes: 30,
+          interruptionPolicy: "normal",
+        },
+        assumptions: ["The user is seated"],
+        steps: [
+          {
+            stepId: "chair-1",
+            action: {
+              type: "chair.set_lumbar_support",
+              input: { levelPercent: 65 },
+            },
+          },
+        ],
+      },
+      planner: {
+        framework: "mastra",
+        provider: "deepseek",
+        model: "deepseek/deepseek-v4-flash",
+      },
+    });
+  });
+
   it("rejects a model draft outside the physical safety envelope", async () => {
     const planner = new StructuredTaskPlanner({
       generateDraft: async () => ({
+        action: "desk.move_to_height",
         targetHeightMm: 1_400,
         durationMinutes: 45,
         interruptionPolicy: "critical-only",

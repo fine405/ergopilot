@@ -1,9 +1,10 @@
-import type {
-  RuntimeObservation,
-  TaskPlanResponse,
-  TaskRunView,
-  TaskSpec,
-  WorkstationSnapshot,
+import {
+  type RuntimeObservation,
+  type TaskPlanResponse,
+  type TaskRunView,
+  type TaskSpec,
+  type WorkstationSnapshot,
+  workstationCapabilityCatalog,
 } from "@ergopilot/contracts";
 import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
@@ -94,23 +95,7 @@ describe("control-plane API", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      schemaVersion: 1,
-      capabilities: [
-        {
-          schemaVersion: 1,
-          id: "desk.move_to_height",
-          mode: "action",
-          risk: "motion",
-          approval: { required: true },
-          inputSchema: {
-            properties: {
-              heightMm: { minimum: 620, maximum: 1_280 },
-            },
-          },
-        },
-      ],
-    });
+    expect(await response.json()).toEqual(workstationCapabilityCatalog);
   });
 
   it("streams validated task and station observations", async () => {
@@ -150,6 +135,7 @@ describe("control-plane API", () => {
       stateVersion: 2,
       observedAtMs: 1_100,
       deskHeightMm: 780,
+      lumbarSupportPercent: 35,
       movementCount: 1,
     });
     const app = createApp(station, { now: () => 1_100 });
@@ -874,6 +860,7 @@ function fakeStation(): StationClient {
     stateVersion: 1,
     observedAtMs: 1_000,
     deskHeightMm: 720,
+    lumbarSupportPercent: 35,
     movementCount: 0,
   };
   return {

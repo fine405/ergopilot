@@ -19,6 +19,7 @@ impl TestDevice {
                 state_version: 108,
                 observed_at_ms: 0,
                 desk_height_mm: 720,
+                lumbar_support_percent: 35,
                 movement_count: 0,
             },
             fail_before_effect: false,
@@ -50,7 +51,7 @@ impl DeviceAdapter for TestDevice {
         if self.snapshot.state_version != expected_state_version {
             return Err(DeviceError::new("state version changed before effect"));
         }
-        self.snapshot.desk_height_mm = action.target_height_mm();
+        apply_action(&mut self.snapshot, action);
         self.snapshot.state_version += 1;
         self.snapshot.movement_count += 1;
         Ok(DeviceExecution::Reported)
@@ -86,11 +87,22 @@ impl DeviceAdapter for ReadbackFailureDevice {
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
         assert_eq!(self.snapshot.state_version, expected_state_version);
-        self.snapshot.desk_height_mm = action.target_height_mm();
+        apply_action(&mut self.snapshot, action);
         self.snapshot.state_version += 1;
         self.snapshot.movement_count += 1;
         self.fail_next_snapshot = true;
         Ok(DeviceExecution::Reported)
+    }
+}
+
+fn apply_action(snapshot: &mut WorkstationSnapshot, action: &DeviceAction) {
+    match action {
+        DeviceAction::DeskMoveToHeight { height_mm } => {
+            snapshot.desk_height_mm = *height_mm;
+        }
+        DeviceAction::ChairSetLumbarSupport { level_percent } => {
+            snapshot.lumbar_support_percent = *level_percent;
+        }
     }
 }
 
@@ -240,6 +252,26 @@ fn desk_height_outside_the_device_envelope_is_rejected() {
             requested: 1_400,
             min: 620,
             max: 1_280
+        }
+    ));
+    assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);
+}
+
+#[test]
+fn lumbar_support_outside_the_device_envelope_is_rejected() {
+    let mut runtime = test_runtime(TestDevice::new());
+    let mut command = desk_command();
+    command.action = DeviceAction::ChairSetLumbarSupport { level_percent: 101 };
+    let grant = grant_for(&command, 900);
+
+    let error = runtime.execute(command, &grant, 1_000).unwrap_err();
+
+    assert!(matches!(
+        error,
+        RuntimeError::UnsafeLumbarSupport {
+            requested: 101,
+            min: 0,
+            max: 100
         }
     ));
     assert_eq!(runtime.snapshot(1_001).unwrap().movement_count, 0);

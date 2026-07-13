@@ -36,6 +36,7 @@ export function WorkstationTwinCard({
 }: WorkstationTwinCardProps) {
   const hydrated = useHydrated();
   const previewHeightMm = pendingPreviewHeight(run);
+  const previewLumbarSupportPercent = pendingPreviewLumbarSupport(run);
   const stateLabel = twinStateLabel(run);
   const latestProgress = run?.deskMotionProgress.at(-1);
 
@@ -77,7 +78,9 @@ export function WorkstationTwinCard({
                 <Suspense fallback={<SceneFallback />}>
                   <WorkstationScene
                     confirmedHeightMm={snapshot.deskHeightMm}
+                    lumbarSupportPercent={snapshot.lumbarSupportPercent}
                     previewHeightMm={previewHeightMm}
+                    previewLumbarSupportPercent={previewLumbarSupportPercent}
                     uncertain={run?.status === "outcome_unknown"}
                   />
                 </Suspense>
@@ -99,8 +102,8 @@ export function WorkstationTwinCard({
             </div>
 
             <div className="space-y-3 rounded-lg border bg-muted/30 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-lg border bg-card/50 px-3 py-2">
                   <p className="text-xs text-muted-foreground">
                     {run?.status === "executing"
                       ? "Observed desk height"
@@ -110,6 +113,16 @@ export function WorkstationTwinCard({
                     {snapshot.deskHeightMm} mm
                   </p>
                 </div>
+                <div className="rounded-lg border bg-card/50 px-3 py-2">
+                  <p className="text-xs text-muted-foreground">
+                    Verified lumbar support
+                  </p>
+                  <p className="mt-1 font-mono text-lg font-semibold">
+                    {snapshot.lumbarSupportPercent}%
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   {previewHeightMm !== undefined && (
                     <Badge
@@ -117,6 +130,14 @@ export function WorkstationTwinCard({
                       className="border-status-warn/40 bg-status-warn/10 text-status-warn"
                     >
                       Preview {previewHeightMm} mm
+                    </Badge>
+                  )}
+                  {previewLumbarSupportPercent !== undefined && (
+                    <Badge
+                      variant="outline"
+                      className="border-status-warn/40 bg-status-warn/10 text-status-warn"
+                    >
+                      Preview lumbar {previewLumbarSupportPercent}%
                     </Badge>
                   )}
                   <Badge variant="secondary">{stateLabel}</Badge>
@@ -143,7 +164,23 @@ function pendingPreviewHeight(run: TaskRunView | undefined) {
   ) {
     return undefined;
   }
-  return run.task.steps[0].action.input.heightMm;
+  const action = run.task.steps[0].action;
+  return action.type === "desk.move_to_height"
+    ? action.input.heightMm
+    : undefined;
+}
+
+function pendingPreviewLumbarSupport(run: TaskRunView | undefined) {
+  if (
+    run?.status !== "awaiting_approval" ||
+    run.approval?.status !== "pending"
+  ) {
+    return undefined;
+  }
+  const action = run.task.steps[0].action;
+  return action.type === "chair.set_lumbar_support"
+    ? action.input.levelPercent
+    : undefined;
 }
 
 function twinStateLabel(run: TaskRunView | undefined) {

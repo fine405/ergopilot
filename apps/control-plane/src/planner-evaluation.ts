@@ -11,7 +11,9 @@ export interface PlannerEvaluationCase {
   id: string;
   prompt: string;
   expected: {
+    actionType?: "desk.move_to_height" | "chair.set_lumbar_support";
     heightMm?: number;
+    lumbarSupportPercent?: number;
     durationMinutes?: number;
     interruptionPolicy?: "normal" | "critical-only";
   };
@@ -53,11 +55,12 @@ export const PLANNER_EVALUATION_SMOKE_CASES = [
     },
   },
   {
-    id: "seated-normal",
+    id: "lumbar-normal",
     prompt:
-      "Set the desk to exactly 720 mm for 30 minutes with normal interruption handling.",
+      "Set the chair lumbar support to exactly 65% for 30 minutes with normal interruption handling.",
     expected: {
-      heightMm: 720,
+      actionType: "chair.set_lumbar_support",
+      lumbarSupportPercent: 65,
       durationMinutes: 30,
       interruptionPolicy: "normal",
     },
@@ -122,10 +125,11 @@ export const PLANNER_EVALUATION_CASES = [
     },
   },
   {
-    id: "chinese-normal",
-    prompt: "请把桌面准确调整到 735 毫米，工作 40 分钟，允许正常消息打断。",
+    id: "chinese-lumbar-normal",
+    prompt: "请把椅子腰托准确调整到 55%，保持 40 分钟，允许正常消息打断。",
     expected: {
-      heightMm: 735,
+      actionType: "chair.set_lumbar_support",
+      lumbarSupportPercent: 55,
       durationMinutes: 40,
       interruptionPolicy: "normal",
     },
@@ -440,13 +444,33 @@ export function scorePlannerOutput(
       failures: ["schema: invalid TaskPlanResponse"],
     };
   }
-  const heightMm = step.action.input.heightMm;
+  const expectedActionType =
+    evaluationCase.expected.actionType ?? "desk.move_to_height";
+  if (step.action.type !== expectedActionType) {
+    return {
+      caseId: evaluationCase.id,
+      passed: false,
+      failures: [
+        `action: expected ${expectedActionType}, received ${step.action.type}`,
+      ],
+    };
+  }
   const { durationMinutes, interruptionPolicy } = parsed.data.task.constraints;
 
-  if (heightMm < 620 || heightMm > 1_280) {
-    failures.push(
-      `heightMm: outside safe range 620-1280, received ${heightMm}`,
-    );
+  if (step.action.type === "desk.move_to_height") {
+    const heightMm = step.action.input.heightMm;
+    if (heightMm < 620 || heightMm > 1_280) {
+      failures.push(
+        `heightMm: outside safe range 620-1280, received ${heightMm}`,
+      );
+    }
+  } else {
+    const lumbarSupportPercent = step.action.input.levelPercent;
+    if (lumbarSupportPercent < 0 || lumbarSupportPercent > 100) {
+      failures.push(
+        `lumbarSupportPercent: outside safe range 0-100, received ${lumbarSupportPercent}`,
+      );
+    }
   }
   if (
     durationMinutes === undefined ||
@@ -463,11 +487,22 @@ export function scorePlannerOutput(
     );
   }
   if (
+    step.action.type === "desk.move_to_height" &&
     evaluationCase.expected.heightMm !== undefined &&
-    heightMm !== evaluationCase.expected.heightMm
+    step.action.input.heightMm !== evaluationCase.expected.heightMm
   ) {
     failures.push(
-      `heightMm: expected ${evaluationCase.expected.heightMm}, received ${heightMm}`,
+      `heightMm: expected ${evaluationCase.expected.heightMm}, received ${step.action.input.heightMm}`,
+    );
+  }
+  if (
+    step.action.type === "chair.set_lumbar_support" &&
+    evaluationCase.expected.lumbarSupportPercent !== undefined &&
+    step.action.input.levelPercent !==
+      evaluationCase.expected.lumbarSupportPercent
+  ) {
+    failures.push(
+      `lumbarSupportPercent: expected ${evaluationCase.expected.lumbarSupportPercent}, received ${step.action.input.levelPercent}`,
     );
   }
   if (

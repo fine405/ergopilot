@@ -16,6 +16,7 @@ const snapshot: WorkstationSnapshot = {
   stateVersion: 3,
   observedAtMs: 1_000,
   deskHeightMm: 720,
+  lumbarSupportPercent: 35,
   movementCount: 2,
 };
 
@@ -82,6 +83,31 @@ const executingRun: TaskRunView = {
   ],
 };
 
+const awaitingChairRun: TaskRunView = {
+  ...awaitingRun,
+  runId: "run-awaiting-chair-approval",
+  taskId: "task-awaiting-chair-approval",
+  task: {
+    ...awaitingRun.task,
+    taskId: "task-awaiting-chair-approval",
+    goal: "adjust_seated_support",
+    steps: [
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+  policyDecision: {
+    outcome: "require_approval",
+    ruleIds: ["chair.lumbar.requires_approval"],
+    reasonCode: null,
+  },
+};
+
 afterEach(cleanup);
 
 describe("WorkstationTwinCard", () => {
@@ -122,5 +148,20 @@ describe("WorkstationTwinCard", () => {
         .getAttribute("aria-valuenow"),
     ).toBe("40");
     expect(screen.queryByText("Preview 790 mm")).toBeNull();
+  });
+
+  it("distinguishes verified lumbar telemetry from a pending chair preview", () => {
+    render(
+      <WorkstationTwinCard
+        snapshot={snapshot}
+        run={awaitingChairRun}
+        isLoading={false}
+        error={null}
+      />,
+    );
+
+    expect(screen.getByText("Verified lumbar support")).toBeTruthy();
+    expect(screen.getByText("35%")).toBeTruthy();
+    expect(screen.getByText("Preview lumbar 65%")).toBeTruthy();
   });
 });

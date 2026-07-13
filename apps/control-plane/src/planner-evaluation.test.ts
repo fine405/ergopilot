@@ -41,6 +41,28 @@ const response: TaskPlanResponse = {
   },
 };
 
+const chairResponse: TaskPlanResponse = {
+  ...response,
+  task: {
+    ...response.task,
+    taskId: "task-eval-chair-1",
+    goal: "adjust_seated_support",
+    constraints: {
+      durationMinutes: 30,
+      interruptionPolicy: "normal",
+    },
+    steps: [
+      {
+        stepId: "chair-1",
+        action: {
+          type: "chair.set_lumbar_support",
+          input: { levelPercent: 65 },
+        },
+      },
+    ],
+  },
+};
+
 describe("planner evaluation", () => {
   it("provides a six-case smoke suite and a 30-case full suite", () => {
     expect(PLANNER_EVALUATION_SMOKE_CASES).toHaveLength(6);
@@ -82,6 +104,29 @@ describe("planner evaluation", () => {
       ),
     ).toEqual({
       caseId: "explicit-standing-focus",
+      passed: true,
+      failures: [],
+    });
+  });
+
+  it("scores the smart-chair capability and target independently from desk motion", () => {
+    expect(
+      scorePlannerOutput(
+        {
+          id: "explicit-lumbar-support",
+          prompt: "Set lumbar support to 65% for 30 minutes",
+          expected: {
+            actionType: "chair.set_lumbar_support",
+            lumbarSupportPercent: 65,
+            durationMinutes: 30,
+            interruptionPolicy: "normal",
+          },
+        },
+        "deepseek",
+        chairResponse,
+      ),
+    ).toEqual({
+      caseId: "explicit-lumbar-support",
       passed: true,
       failures: [],
     });

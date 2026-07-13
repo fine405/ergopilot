@@ -174,6 +174,48 @@ describe("ProcessStationClient", () => {
     expect(snapshot.movementCount).toBe(1);
   });
 
+  it("runs a protected chair action across the TypeScript-Rust boundary", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-chair-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-chair-1",
+      goal: "adjust_seated_support",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "chair-1",
+          action: {
+            type: "chair.set_lumbar_support",
+            input: { levelPercent: 65 },
+          },
+        },
+      ],
+    };
+
+    const before = await client.stationSnapshot(900);
+    const awaiting = await client.startTask(task, 1_000);
+    const completed = await client.approveTask(awaiting.runId, "user-1", 1_100);
+    const after = await client.stationSnapshot(1_200);
+
+    expect(before.lumbarSupportPercent).toBe(35);
+    expect(awaiting.status).toBe("awaiting_approval");
+    expect(completed.status).toBe("completed");
+    expect(completed.deskMotionProgress).toEqual([]);
+    expect(completed.command?.outcome?.lumbarSupportPercent).toBe(65);
+    expect(after.lumbarSupportPercent).toBe(65);
+    expect(after.deskHeightMm).toBe(720);
+    expect(after.movementCount).toBe(1);
+  });
+
   it("recovers a killed partial motion and permits the next command", async () => {
     const directory = await mkdtemp(
       join(tmpdir(), "ergopilot-partial-motion-"),

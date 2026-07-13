@@ -7,7 +7,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::{path::Path, time::Duration};
 use thiserror::Error;
 
-pub use ergopilot_protocol::{MAX_DESK_HEIGHT_MM, MIN_DESK_HEIGHT_MM};
+pub use ergopilot_protocol::{
+    MAX_DESK_HEIGHT_MM, MAX_LUMBAR_SUPPORT_PERCENT, MIN_DESK_HEIGHT_MM, MIN_LUMBAR_SUPPORT_PERCENT,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceExecution {
@@ -108,6 +110,8 @@ pub enum RuntimeError {
     IdempotencyConflict { key: String },
     #[error("desk height {requested} mm is outside the safe envelope {min}..={max} mm")]
     UnsafeDeskHeight { requested: u16, min: u16, max: u16 },
+    #[error("lumbar support {requested}% is outside the safe envelope {min}..={max}%")]
+    UnsafeLumbarSupport { requested: u8, min: u8, max: u8 },
     #[error("command expired at {expires_at_ms}, current time is {now_ms}")]
     ExpiredCommand { expires_at_ms: u64, now_ms: u64 },
     #[error("action command is missing a policy grant")]
@@ -289,13 +293,27 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             });
         }
 
-        let requested_height = command.action.target_height_mm();
-        if !(MIN_DESK_HEIGHT_MM..=MAX_DESK_HEIGHT_MM).contains(&requested_height) {
-            return Err(RuntimeError::UnsafeDeskHeight {
-                requested: requested_height,
-                min: MIN_DESK_HEIGHT_MM,
-                max: MAX_DESK_HEIGHT_MM,
-            });
+        match &command.action {
+            DeviceAction::DeskMoveToHeight { height_mm }
+                if !(MIN_DESK_HEIGHT_MM..=MAX_DESK_HEIGHT_MM).contains(height_mm) =>
+            {
+                return Err(RuntimeError::UnsafeDeskHeight {
+                    requested: *height_mm,
+                    min: MIN_DESK_HEIGHT_MM,
+                    max: MAX_DESK_HEIGHT_MM,
+                });
+            }
+            DeviceAction::ChairSetLumbarSupport { level_percent }
+                if !(MIN_LUMBAR_SUPPORT_PERCENT..=MAX_LUMBAR_SUPPORT_PERCENT)
+                    .contains(level_percent) =>
+            {
+                return Err(RuntimeError::UnsafeLumbarSupport {
+                    requested: *level_percent,
+                    min: MIN_LUMBAR_SUPPORT_PERCENT,
+                    max: MAX_LUMBAR_SUPPORT_PERCENT,
+                });
+            }
+            _ => {}
         }
 
         let initial_snapshot = self.device.snapshot(now_ms)?;
@@ -351,7 +369,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 return Err(RuntimeError::Device(error));
             }
         };
-        let verified = observed.desk_height_mm == command.action.target_height_mm();
+        let verified = command.action.is_satisfied_by(&observed);
         let status = if verified {
             CommandStatus::Succeeded
         } else {
@@ -360,6 +378,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         let outcome = verified.then_some(VerifiedOutcome {
             state_version: observed.state_version,
             desk_height_mm: observed.desk_height_mm,
+            lumbar_support_percent: observed.lumbar_support_percent,
             verified_at_ms: now_ms,
         });
         let outcome_json = outcome.as_ref().map(serde_json::to_string).transpose()?;
@@ -490,10 +509,11 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         self.device.prepare_reconciliation(&command_id)?;
         let observed = self.device.snapshot(now_ms)?;
 
-        if observed.desk_height_mm == command.action.target_height_mm() {
+        if command.action.is_satisfied_by(&observed) {
             let outcome = VerifiedOutcome {
                 state_version: observed.state_version,
                 desk_height_mm: observed.desk_height_mm,
+                lumbar_support_percent: observed.lumbar_support_percent,
                 verified_at_ms: now_ms,
             };
             let outcome_json = serde_json::to_string(&outcome)?;

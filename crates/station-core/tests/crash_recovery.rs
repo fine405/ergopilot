@@ -78,6 +78,7 @@ fn snapshot(observed_at_ms: u64) -> WorkstationSnapshot {
         state_version: 108,
         observed_at_ms,
         desk_height_mm: 720,
+        lumbar_support_percent: 35,
         movement_count: 0,
     }
 }

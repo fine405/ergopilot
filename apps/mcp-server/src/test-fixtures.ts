@@ -1,6 +1,9 @@
 import type { TaskRunView, TaskSpec } from "@ergopilot/contracts";
 
 export function createAwaitingApprovalRun(task: TaskSpec): TaskRunView {
+  const firstStep = task.steps[0];
+  if (!firstStep) throw new Error("test task must contain one device action");
+
   return {
     runId: `run-${task.taskId}`,
     taskId: task.taskId,
@@ -23,7 +26,11 @@ export function createAwaitingApprovalRun(task: TaskSpec): TaskRunView {
     ],
     policyDecision: {
       outcome: "require_approval",
-      ruleIds: ["desk.motion.requires_approval"],
+      ruleIds: [
+        firstStep.action.type === "desk.move_to_height"
+          ? "desk.motion.requires_approval"
+          : "chair.lumbar.requires_approval",
+      ],
       reasonCode: null,
     },
   };

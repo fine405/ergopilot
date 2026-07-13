@@ -24,13 +24,17 @@ const payloadCollider: [number] = [0.14];
 
 interface WorkstationSceneProps {
   confirmedHeightMm: number;
+  lumbarSupportPercent: number;
   previewHeightMm: number | undefined;
+  previewLumbarSupportPercent: number | undefined;
   uncertain: boolean;
 }
 
 export function WorkstationScene({
   confirmedHeightMm,
+  lumbarSupportPercent,
   previewHeightMm,
+  previewLumbarSupportPercent,
   uncertain,
 }: WorkstationSceneProps) {
   return (
@@ -62,7 +66,10 @@ export function WorkstationScene({
           <CuboidCollider args={floorCollider} position={floorPosition} />
         </RigidBody>
       </Physics>
-      <Chair />
+      <Chair
+        lumbarSupportPercent={lumbarSupportPercent}
+        previewLumbarSupportPercent={previewLumbarSupportPercent}
+      />
       <Grid
         args={[12, 12]}
         cellColor="#294239"
@@ -242,7 +249,13 @@ function Monitor({ position }: { position: [number, number, number] }) {
   );
 }
 
-function Chair() {
+function Chair({
+  lumbarSupportPercent,
+  previewLumbarSupportPercent,
+}: {
+  lumbarSupportPercent: number;
+  previewLumbarSupportPercent: number | undefined;
+}) {
   return (
     <group position={[0.25, 0, 2.15]} rotation={[0, Math.PI, 0]}>
       <mesh castShadow position={[0, 0.92, 0]}>
@@ -253,6 +266,10 @@ function Chair() {
         <boxGeometry args={[1.08, 1.25, 0.16]} />
         <meshStandardMaterial color="#2d5044" roughness={0.76} />
       </mesh>
+      <LumbarPad levelPercent={lumbarSupportPercent} />
+      {previewLumbarSupportPercent !== undefined && (
+        <LumbarPad levelPercent={previewLumbarSupportPercent} preview />
+      )}
       <mesh castShadow position={[0, 0.48, 0]}>
         <cylinderGeometry args={[0.075, 0.075, 0.8, 18]} />
         <meshStandardMaterial color="#28312f" metalness={0.65} />
@@ -262,6 +279,30 @@ function Chair() {
         <meshStandardMaterial color="#222a28" metalness={0.7} />
       </mesh>
     </group>
+  );
+}
+
+function LumbarPad({
+  levelPercent,
+  preview = false,
+}: {
+  levelPercent: number;
+  preview?: boolean;
+}) {
+  const depth = 0.08 + (levelPercent / 100) * 0.2;
+
+  return (
+    <mesh castShadow={!preview} position={[0, 1.5, 0.24 - depth / 2]}>
+      <boxGeometry args={[0.72, 0.34, depth]} />
+      <meshStandardMaterial
+        color={preview ? "#f2b94b" : "#78c6aa"}
+        emissive={preview ? "#6b4107" : "#255e4b"}
+        emissiveIntensity={preview ? 0.2 : 0.35}
+        opacity={preview ? 0.42 : 1}
+        transparent={preview}
+        wireframe={preview}
+      />
+    </mesh>
   );
 }
 

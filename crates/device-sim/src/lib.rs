@@ -38,6 +38,7 @@ impl SqliteSimulator {
                 station_id TEXT NOT NULL,
                 state_version INTEGER NOT NULL,
                 desk_height_mm INTEGER NOT NULL,
+                lumbar_support_percent INTEGER NOT NULL DEFAULT 35,
                 movement_count INTEGER NOT NULL
             );
 
@@ -63,6 +64,21 @@ impl SqliteSimulator {
             ) VALUES (1, 'station-sim-1', 1, 720, 0);
             ",
         )?;
+        let has_lumbar_support = {
+            let mut statement = connection.prepare("PRAGMA table_info(simulator_state)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|column| column == "lumbar_support_percent")
+        };
+        if !has_lumbar_support {
+            connection.execute(
+                "ALTER TABLE simulator_state
+                 ADD COLUMN lumbar_support_percent INTEGER NOT NULL DEFAULT 35",
+                [],
+            )?;
+        }
 
         Ok(Self {
             connection,
@@ -82,7 +98,8 @@ impl SqliteSimulator {
 
     fn read_snapshot(&self, observed_at_ms: u64) -> Result<WorkstationSnapshot, rusqlite::Error> {
         self.connection.query_row(
-            "SELECT station_id, state_version, desk_height_mm, movement_count
+            "SELECT station_id, state_version, desk_height_mm,
+                    lumbar_support_percent, movement_count
              FROM simulator_state WHERE singleton = 1",
             [],
             |row| {
@@ -92,7 +109,8 @@ impl SqliteSimulator {
                     state_version: row.get(1)?,
                     observed_at_ms,
                     desk_height_mm: row.get(2)?,
-                    movement_count: row.get(3)?,
+                    lumbar_support_percent: row.get(3)?,
+                    movement_count: row.get(4)?,
                 })
             },
         )
@@ -115,9 +133,8 @@ impl SqliteSimulator {
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
         let execution = self.take_execution()?;
-        let updated = self
-            .connection
-            .execute(
+        let updated = match action {
+            DeviceAction::DeskMoveToHeight { height_mm } => self.connection.execute(
                 "UPDATE simulator_state
                  SET desk_height_mm = ?1,
                      state_version = state_version + 1,
@@ -125,9 +142,20 @@ impl SqliteSimulator {
                  WHERE singleton = 1
                    AND state_version = ?2
                    AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
-                params![action.target_height_mm(), expected_state_version],
-            )
-            .map_err(storage_error)?;
+                params![height_mm, expected_state_version],
+            ),
+            DeviceAction::ChairSetLumbarSupport { level_percent } => self.connection.execute(
+                "UPDATE simulator_state
+                 SET lumbar_support_percent = ?1,
+                     state_version = state_version + 1,
+                     movement_count = movement_count + 1
+                 WHERE singleton = 1
+                   AND state_version = ?2
+                   AND NOT EXISTS (SELECT 1 FROM simulator_motion)",
+                params![level_percent, expected_state_version],
+            ),
+        }
+        .map_err(storage_error)?;
         if updated == 0 {
             return Err(self.actuator_conflict(expected_state_version));
         }
@@ -141,7 +169,10 @@ impl SqliteSimulator {
         started_at_ms: u64,
     ) -> Result<DeviceExecution, DeviceError> {
         let execution = self.take_execution()?;
-        let target_height_mm = command.action.target_height_mm();
+        let target_height_mm = command
+            .action
+            .target_height_mm()
+            .ok_or_else(|| DeviceError::new("progressive motion requires a desk height action"))?;
         let start_height_mm = self.begin_motion(command, target_height_mm, started_at_ms)?;
         let step_delay_ms = u64::try_from(self.motion_step_delay.as_millis()).unwrap_or(u64::MAX);
 
@@ -317,7 +348,12 @@ impl DeviceAdapter for SqliteSimulator {
         command: &DeviceCommand,
         started_at_ms: u64,
     ) -> Result<DeviceExecution, DeviceError> {
-        self.apply_progressive(command, started_at_ms)
+        match command.action {
+            DeviceAction::DeskMoveToHeight { .. } => self.apply_progressive(command, started_at_ms),
+            DeviceAction::ChairSetLumbarSupport { .. } => {
+                self.apply_instant(&command.action, command.expected_state_version)
+            }
+        }
     }
 
     fn desk_motion_progress(

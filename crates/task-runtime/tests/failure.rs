@@ -13,6 +13,7 @@ impl DeviceAdapter for UnavailableDevice {
             state_version: 1,
             observed_at_ms,
             desk_height_mm: 720,
+            lumbar_support_percent: 35,
             movement_count: 0,
         })
     }

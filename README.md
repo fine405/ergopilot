@@ -2,7 +2,8 @@
 
 ErgoPilot is a recoverable embodied-agent runtime for a simulated ergonomic
 workstation. It turns a typed work goal into a safe, observable and resumable
-desk action while keeping policy and physical execution outside the LLM.
+workstation action while keeping policy and physical execution outside the
+LLM.
 
 The project is deliberately not a posture chatbot. Its primary engineering
 problem is reliable execution against fallible devices:
@@ -53,6 +54,10 @@ runnable end to end. The current slice implements:
   server;
 - permission-bounded MCP tools that can query state, inspect runs and create a
   pending proposal, but cannot approve or directly execute physical motion;
+- typed desk-height and smart-chair lumbar-support actions with independent
+  safety envelopes, approval rules and verified simulator state;
+- a Three.js digital twin whose desk actuator and chair lumbar pad follow Rust
+  telemetry, with Rapier providing visual gravity and collision simulation;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
 - URL-persisted run selection, so an in-progress approval survives refresh.
@@ -141,8 +146,9 @@ See the measured methodology, results and limitations in
 
 The local stdio MCP server expects the control plane to be running. It exposes
 `workstation.list_capabilities`, `workstation.get_state`,
-`workstation.propose_desk_motion` and `workstation.inspect_run`. Start it with
-stdout reserved for MCP protocol traffic:
+`workstation.propose_desk_motion`, `workstation.propose_lumbar_support` and
+`workstation.inspect_run`. Start it with stdout reserved for MCP protocol
+traffic:
 
 ```bash
 ERGOPILOT_CONTROL_PLANE_URL=http://localhost:8787 \
@@ -180,6 +186,9 @@ receive authority over policy or device execution.
   explicit approval dialog.
 - **AI Elements, selectively:** the `Task` element renders generated plans;
   deterministic forms, approval and device state remain shadcn/ui.
+- **Three.js + Rapier:** a browser digital twin renders verified or pending
+  device state and adds visual-only rigid-body physics; Rust remains the
+  authoritative device state.
 - **assistant-ui, deferred:** useful only if multi-thread conversation becomes
   a real product requirement; ErgoPilot remains task-first rather than
   chat-first.

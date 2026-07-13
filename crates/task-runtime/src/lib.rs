@@ -15,6 +15,7 @@ const MAX_RECOVERY_ATTEMPTS: usize = 3;
 #[serde(rename_all = "snake_case")]
 pub enum TaskGoal {
     PrepareFocusSession,
+    AdjustSeatedSupport,
     RelieveNeckDiscomfort,
     RestoreProfile,
 }
@@ -71,6 +72,27 @@ impl TaskSpec {
                 step_id: "desk-1".into(),
                 action: DeviceAction::DeskMoveToHeight {
                     height_mm: desk_height_mm,
+                },
+            }],
+        }
+    }
+
+    pub fn adjust_seated_support(
+        task_id: impl Into<String>,
+        requested_by: impl Into<String>,
+        lumbar_support_percent: u8,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            task_id: task_id.into(),
+            goal: TaskGoal::AdjustSeatedSupport,
+            requested_by: requested_by.into(),
+            constraints: TaskConstraints::default(),
+            assumptions: Vec::new(),
+            steps: vec![PlannedStep {
+                step_id: "chair-1".into(),
+                action: DeviceAction::ChairSetLumbarSupport {
+                    level_percent: lumbar_support_percent,
                 },
             }],
         }
