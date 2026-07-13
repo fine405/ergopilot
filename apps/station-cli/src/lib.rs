@@ -87,6 +87,15 @@ pub enum RpcRequest {
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
+    #[serde(rename = "demo.task.approve_with_device_offline")]
+    DemoApproveTaskWithDeviceOffline {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "approvedBy")]
+        approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
     #[serde(rename = "task.reconcile")]
     ReconcileTask {
         #[serde(rename = "runId")]
@@ -115,8 +124,14 @@ pub fn run_rpc(
         fs::create_dir_all(parent)?;
     }
     let mut simulator = SqliteSimulator::open(database_path)?;
-    if matches!(&request, RpcRequest::DemoApproveTaskWithAckLoss { .. }) {
-        simulator.set_next_fault(NextFault::LoseReportAfterEffect);
+    match &request {
+        RpcRequest::DemoApproveTaskWithAckLoss { .. } => {
+            simulator.set_next_fault(NextFault::LoseReportAfterEffect);
+        }
+        RpcRequest::DemoApproveTaskWithDeviceOffline { .. } => {
+            simulator.set_next_fault(NextFault::DeviceUnavailableBeforeEffect);
+        }
+        _ => {}
     }
     let mut runtime = TaskRuntime::open(database_path, simulator, authority)?;
     let result = match request {
@@ -134,6 +149,20 @@ pub fn run_rpc(
             approved_by,
             now_ms,
         } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
+        RpcRequest::DemoApproveTaskWithDeviceOffline {
+            run_id,
+            approved_by,
+            now_ms,
+        } => {
+            let run = match runtime.approve(&run_id, &approved_by, now_ms) {
+                Ok(run) => run,
+                Err(TaskRuntimeError::Station(RuntimeError::Device(_))) => {
+                    runtime.inspect(&run_id)?
+                }
+                Err(error) => return Err(error.into()),
+            };
+            serde_json::to_value(run)?
+        }
         RpcRequest::ReconcileTask { run_id, now_ms } => {
             serde_json::to_value(runtime.reconcile(&run_id, now_ms)?)?
         }

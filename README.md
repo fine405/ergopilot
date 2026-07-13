@@ -31,6 +31,8 @@ runnable end to end. The current slice implements:
 - reconciliation across both task/command dispatch crash windows;
 - an explicit demo-only ACK-loss path that proves reconciliation does not
   repeat a physical effect;
+- a demo-only device-offline path that fails before effect and requires a
+  fresh run instead of a blind retry;
 - a bounded JSON process protocol between the TypeScript control plane and the
   Rust station runtime;
 - an optional Mastra planner that converts natural language into a bounded,
@@ -74,6 +76,11 @@ To exercise uncertain-outcome recovery in the operator console, create a
 manual task, open **Review & approve**, choose **Approve + lose ACK (demo)**,
 then click **Reconcile state**. The run moves through `outcome_unknown` to
 `completed`, while the station movement count increases only once.
+
+To exercise a definite pre-effect failure, choose **Approve + device offline
+(demo)**. The run becomes `failed`, the timeline records `execution_failed`,
+and the movement count stays at zero. Create a fresh task run after the
+simulated device returns, then use normal approval to complete one movement.
 
 The deterministic CLI demos remain available:
 

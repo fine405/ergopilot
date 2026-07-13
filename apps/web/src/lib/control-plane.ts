@@ -41,6 +41,10 @@ export interface ControlPlane {
     runId: string,
     approvedBy: string,
   ): Promise<TaskRunView>;
+  demoApproveTaskWithDeviceOffline(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView>;
   reconcileTask(runId: string): Promise<TaskRunView>;
   stationSnapshot(): Promise<WorkstationSnapshot>;
 }
@@ -97,6 +101,19 @@ export class HonoControlPlane implements ControlPlane {
   ): Promise<TaskRunView> {
     const response = await this.#client.api.demo["task-runs"][":runId"][
       "approve-with-ack-loss"
+    ].$post({
+      param: { runId },
+      json: { approvedBy },
+    });
+    return parseResponse(response, taskRunViewSchema);
+  }
+
+  async demoApproveTaskWithDeviceOffline(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    const response = await this.#client.api.demo["task-runs"][":runId"][
+      "approve-with-device-offline"
     ].$post({
       param: { runId },
       json: { approvedBy },

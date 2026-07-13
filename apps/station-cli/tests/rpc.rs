@@ -140,6 +140,80 @@ fn demo_ack_loss_rpc_reconciles_without_repeating_the_effect() {
 }
 
 #[test]
+fn demo_device_offline_rpc_fails_before_effect_and_a_new_run_can_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let failed_task = TaskSpec::prepare_focus_session("task-rpc-offline", "user-1", 800);
+
+    let started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task: failed_task,
+            now_ms: 1_000,
+        },
+    );
+    let failed_run_id = started["result"]["runId"].as_str().unwrap();
+    let failed = invoke(
+        &database,
+        &authority,
+        RpcRequest::DemoApproveTaskWithDeviceOffline {
+            run_id: failed_run_id.into(),
+            approved_by: "user-1".into(),
+            now_ms: 1_100,
+        },
+    );
+    assert_eq!(failed["result"]["status"], "failed");
+    assert_eq!(failed["result"]["command"]["status"], "failed");
+    assert_eq!(
+        failed["result"]["commandEvents"][2]["eventType"],
+        "execution_failed"
+    );
+
+    let after_failure = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_150,
+        },
+    );
+    assert_eq!(after_failure["result"]["deskHeightMm"], 720);
+    assert_eq!(after_failure["result"]["movementCount"], 0);
+
+    let recovery_task = TaskSpec::prepare_focus_session("task-rpc-after-offline", "user-1", 800);
+    let recovery_started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task: recovery_task,
+            now_ms: 1_200,
+        },
+    );
+    let recovery_run_id = recovery_started["result"]["runId"].as_str().unwrap();
+    let completed = invoke(
+        &database,
+        &authority,
+        RpcRequest::ApproveTask {
+            run_id: recovery_run_id.into(),
+            approved_by: "user-1".into(),
+            now_ms: 1_300,
+        },
+    );
+    assert_eq!(completed["result"]["status"], "completed");
+
+    let final_snapshot = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_350,
+        },
+    );
+    assert_eq!(final_snapshot["result"]["deskHeightMm"], 800);
+    assert_eq!(final_snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
 fn rpc_process_rejects_input_larger_than_the_protocol_limit() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("oversized.sqlite");

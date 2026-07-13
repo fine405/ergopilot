@@ -99,4 +99,59 @@ describe("ProcessStationClient", () => {
     expect(reconciled.status).toBe("completed");
     expect(finalSnapshot.movementCount).toBe(1);
   });
+
+  it("fails offline motion before effect and completes a fresh run once", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-offline-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-offline",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 810 },
+          },
+        },
+      ],
+    };
+
+    const awaiting = await client.startTask(task, 1_000);
+    const failed = await client.demoApproveTaskWithDeviceOffline(
+      awaiting.runId,
+      "user-1",
+      1_100,
+    );
+    const afterFailure = await client.stationSnapshot(1_150);
+    const recoveryTask = {
+      ...task,
+      taskId: "task-process-client-after-offline",
+    };
+    const recoveryAwaiting = await client.startTask(recoveryTask, 1_200);
+    const completed = await client.approveTask(
+      recoveryAwaiting.runId,
+      "user-1",
+      1_300,
+    );
+    const finalSnapshot = await client.stationSnapshot(1_350);
+
+    expect(failed.status).toBe("failed");
+    expect(failed.commandEvents.at(-1)?.eventType).toBe("execution_failed");
+    expect(afterFailure.deskHeightMm).toBe(720);
+    expect(afterFailure.movementCount).toBe(0);
+    expect(completed.status).toBe("completed");
+    expect(finalSnapshot.deskHeightMm).toBe(810);
+    expect(finalSnapshot.movementCount).toBe(1);
+  });
 });

@@ -48,6 +48,7 @@ interface RunOverviewProps {
   isMutating: boolean;
   onApprove: (run: TaskRunView) => void;
   onApproveWithAckLoss: (run: TaskRunView) => void;
+  onApproveWithDeviceOffline: (run: TaskRunView) => void;
   onReconcile: (run: TaskRunView) => void;
 }
 
@@ -58,6 +59,7 @@ export function RunOverview({
   isMutating,
   onApprove,
   onApproveWithAckLoss,
+  onApproveWithDeviceOffline,
   onReconcile,
 }: RunOverviewProps) {
   if (isLoading && !run) {
@@ -185,14 +187,30 @@ export function RunOverview({
                     <br />
                     expires: {formatExpiry(run.approval.expiresAtMs)}
                   </div>
+                  <div className="space-y-3 rounded-lg border border-dashed p-3">
+                    <div>
+                      <p className="text-sm font-medium">Fault injection lab</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Demo-only paths; normal approval remains unchanged.
+                      </p>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <AlertDialogAction
+                        variant="destructive"
+                        onClick={() => onApproveWithAckLoss(run)}
+                      >
+                        Approve + lose ACK (demo)
+                      </AlertDialogAction>
+                      <AlertDialogAction
+                        variant="destructive"
+                        onClick={() => onApproveWithDeviceOffline(run)}
+                      >
+                        Approve + device offline (demo)
+                      </AlertDialogAction>
+                    </div>
+                  </div>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      variant="destructive"
-                      onClick={() => onApproveWithAckLoss(run)}
-                    >
-                      Approve + lose ACK (demo)
-                    </AlertDialogAction>
                     <AlertDialogAction onClick={() => onApprove(run)}>
                       Approve one motion
                     </AlertDialogAction>
@@ -260,6 +278,21 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
         <AlertDescription>
           The runtime read the device state after execution and observed the
           requested desk height.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (
+    run.status === "failed" &&
+    run.commandEvents.some((event) => event.eventType === "execution_failed")
+  ) {
+    return (
+      <Alert variant="destructive">
+        <TriangleAlert />
+        <AlertTitle>Execution rejected before effect</AlertTitle>
+        <AlertDescription>
+          The adapter proved no physical effect occurred, so the runtime did not
+          retry. Create a fresh run after the device is available.
         </AlertDescription>
       </Alert>
     );

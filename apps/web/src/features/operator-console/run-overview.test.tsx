@@ -61,6 +61,7 @@ describe("RunOverview", () => {
         isMutating={false}
         onApprove={vi.fn()}
         onApproveWithAckLoss={onApproveWithAckLoss}
+        onApproveWithDeviceOffline={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -71,5 +72,31 @@ describe("RunOverview", () => {
     );
 
     expect(onApproveWithAckLoss).toHaveBeenCalledWith(awaitingRun);
+  });
+
+  it("offers an explicit demo action for a device-offline failure", () => {
+    const onApproveWithDeviceOffline = vi.fn();
+
+    render(
+      <RunOverview
+        run={awaitingRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={onApproveWithDeviceOffline}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review & approve" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Approve + device offline (demo)",
+      }),
+    );
+
+    expect(onApproveWithDeviceOffline).toHaveBeenCalledWith(awaitingRun);
   });
 });

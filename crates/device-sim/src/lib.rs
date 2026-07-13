@@ -14,6 +14,7 @@ pub enum SimulatorError {
 pub enum NextFault {
     #[default]
     None,
+    DeviceUnavailableBeforeEffect,
     LoseReportAfterEffect,
 }
 
@@ -81,6 +82,15 @@ impl DeviceAdapter for SqliteSimulator {
         action: &DeviceAction,
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
+        let execution = match std::mem::take(&mut self.next_fault) {
+            NextFault::None => DeviceExecution::Reported,
+            NextFault::DeviceUnavailableBeforeEffect => {
+                return Err(DeviceError::new(
+                    "simulated device unavailable before effect",
+                ));
+            }
+            NextFault::LoseReportAfterEffect => DeviceExecution::OutcomeUnknown,
+        };
         let updated = self
             .connection
             .execute(
@@ -102,10 +112,6 @@ impl DeviceAdapter for SqliteSimulator {
             )));
         }
 
-        let fault = std::mem::take(&mut self.next_fault);
-        Ok(match fault {
-            NextFault::None => DeviceExecution::Reported,
-            NextFault::LoseReportAfterEffect => DeviceExecution::OutcomeUnknown,
-        })
+        Ok(execution)
     }
 }
