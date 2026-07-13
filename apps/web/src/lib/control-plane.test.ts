@@ -5,6 +5,37 @@ import { HonoControlPlane, TauriControlPlane } from "./control-plane";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("HonoControlPlane", () => {
+  it("parses planner evaluation evidence from the control plane", async () => {
+    const report = {
+      schemaVersion: 1,
+      generatedAt: "2026-07-13T01:24:01.271Z",
+      suite: "full",
+      provider: "deepseek",
+      model: "deepseek/deepseek-v4-flash",
+      sourceCommit: "67e43cd",
+      totalCases: 1,
+      passedCases: 1,
+      passRate: 1,
+      latencyMs: { p50: 2_860, p95: 2_860 },
+      results: [
+        {
+          caseId: "standing-critical",
+          passed: true,
+          failures: [],
+          durationMs: 2_860,
+        },
+      ],
+    } as const;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ reports: [report] }, { status: 200 })),
+    );
+
+    await expect(
+      new HonoControlPlane("http://localhost:8787").plannerEvaluations(),
+    ).resolves.toEqual({ reports: [report] });
+  });
+
   it("keeps realtime observations optional when EventSource is unavailable", () => {
     vi.stubGlobal("EventSource", undefined);
     const onObservation = vi.fn();

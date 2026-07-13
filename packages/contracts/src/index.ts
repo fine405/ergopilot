@@ -240,6 +240,90 @@ export const plannerProvidersResponseSchema = z
   })
   .strict();
 
+const plannerEvaluationCaseResultSchema = z
+  .object({
+    caseId: identifierSchema,
+    passed: z.boolean(),
+    failures: z.array(z.string().trim().min(1).max(512)).max(16),
+    durationMs: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.passed && result.failures.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "passing evaluation cases cannot contain failures",
+      });
+    }
+    if (!result.passed && result.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "failing evaluation cases must contain evidence",
+      });
+    }
+  });
+
+export const plannerEvaluationReportSchema = z
+  .object({
+    schemaVersion: z.literal(schemaVersion),
+    generatedAt: z.iso.datetime(),
+    suite: z.enum(["smoke", "full"]),
+    provider: plannerProviderIdSchema,
+    model: z.string().trim().min(1).nullable(),
+    sourceCommit: identifierSchema.nullable(),
+    totalCases: z.number().int().positive(),
+    passedCases: z.number().int().nonnegative(),
+    passRate: z.number().min(0).max(1),
+    latencyMs: z
+      .object({
+        p50: z.number().int().nonnegative(),
+        p95: z.number().int().nonnegative(),
+      })
+      .strict(),
+    results: z.array(plannerEvaluationCaseResultSchema).min(1).max(100),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    const passedCases = report.results.filter((result) => result.passed).length;
+    if (report.results.length !== report.totalCases) {
+      context.addIssue({
+        code: "custom",
+        path: ["totalCases"],
+        message: "totalCases must match the case evidence",
+      });
+    }
+    if (passedCases !== report.passedCases) {
+      context.addIssue({
+        code: "custom",
+        path: ["passedCases"],
+        message: "passedCases must match the case evidence",
+      });
+    }
+    const expectedPassRate = passedCases / report.results.length;
+    if (Math.abs(report.passRate - expectedPassRate) > Number.EPSILON) {
+      context.addIssue({
+        code: "custom",
+        path: ["passRate"],
+        message: "passRate must match the case evidence",
+      });
+    }
+    if (report.latencyMs.p50 > report.latencyMs.p95) {
+      context.addIssue({
+        code: "custom",
+        path: ["latencyMs", "p50"],
+        message: "p50 latency cannot exceed p95 latency",
+      });
+    }
+  });
+
+export const plannerEvaluationsResponseSchema = z
+  .object({
+    reports: z.array(plannerEvaluationReportSchema).max(100),
+  })
+  .strict();
+
 const plannerRuntimeErrorCodeSchema = z.enum([
   "provider_unavailable",
   "generation_failed",
@@ -594,6 +678,12 @@ export type PlannerProvider = z.infer<typeof plannerProviderSchema>;
 export type PlannerProviderId = z.infer<typeof plannerProviderIdSchema>;
 export type PlannerProvidersResponse = z.infer<
   typeof plannerProvidersResponseSchema
+>;
+export type PlannerEvaluationReport = z.infer<
+  typeof plannerEvaluationReportSchema
+>;
+export type PlannerEvaluationsResponse = z.infer<
+  typeof plannerEvaluationsResponseSchema
 >;
 export type PlannerAttempt = z.infer<typeof plannerAttemptSchema>;
 export type PlannerAttemptsResponse = z.infer<

@@ -64,6 +64,11 @@ desktop station are runnable end to end. The current slice implements:
   station database and policy signing key behind one typed Rust IPC command;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
+- a dedicated `/lab` surface that creates fresh simulator tasks for ACK loss,
+  pre-effect device failure and recoverable pre-dispatch unavailability, then
+  displays durable run evidence and the matching safe recovery action;
+- a dedicated `/evals` surface that validates, deduplicates and compares
+  published plus locally generated planner reports without exposing prompts;
 - URL-persisted run selection, so an in-progress approval survives refresh.
 
 The Web control plane launches a short-lived `station-cli --rpc` process for
@@ -95,6 +100,12 @@ Set `OPENAI_API_KEY`, `DEEPSEEK_API_KEY` or both in `.env` to enable the
 matching Mastra planner providers. The provider selector shows missing-key
 providers as disabled. Without either key, the deterministic task builder and
 complete execution path remain usable.
+
+The primary routes are:
+
+- `/` — Chat planner, digital twin, approval and complete run timeline;
+- `/lab` — deterministic simulator fault injection and recovery evidence;
+- `/evals` — planner quality, latency, provenance and regression artifacts.
 
 For the shortest Chat-to-device demo, use a request such as: **Set the desk to
 790 mm and lumbar support to 65% for a 45 minute focus session. Only interrupt
@@ -148,6 +159,11 @@ manual task, open **Review & approve**, choose **Approve + lose ACK (demo)**,
 then click **Reconcile state**. The run moves through `outcome_unknown` to
 `completed`, while the station movement count increases only once.
 
+The shorter fault demonstration is available at `/lab`: choose **Inject ACK
+loss after effect**, inspect the before/after movement evidence, then choose
+**Reconcile actual state**. The same page exposes the definite offline and
+recoverable pre-dispatch scenarios without requiring an LLM provider.
+
 To exercise a definite pre-effect failure, choose **Approve + device offline
 (demo)**. The station command has already been journaled, so the run becomes
 `failed`, the timeline records `execution_failed`, and the movement count stays
@@ -194,6 +210,11 @@ pnpm eval:planner deepseek full
 
 See the measured methodology, results and limitations in
 [`docs/PLANNER_EVALUATION.md`](docs/PLANNER_EVALUATION.md).
+Open `/evals` to inspect the published baseline together with reports in
+`target/evaluations/`. The control plane validates every artifact, collapses a
+published report and its local copy into one experiment, and fails closed if
+their core case evidence conflicts. Refreshing the page discovers newly saved
+reports without restarting the server.
 
 The local stdio MCP server expects the control plane to be running. It exposes
 `workstation.list_capabilities`, `workstation.get_state`,

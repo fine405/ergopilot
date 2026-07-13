@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server";
 
 import { createApp } from "./app";
 import { openFilePlannerAttemptStore } from "./planner-attempt-store";
+import { openFilePlannerEvaluationStore } from "./planner-evaluation-store";
 import { createProcessStationClient } from "./station-client";
 import { createConfiguredTaskPlanners } from "./task-planner";
 
@@ -25,9 +26,14 @@ const plannerAttemptStore = await openFilePlannerAttemptStore(
       "target/ergopilot-planner-attempts.json",
   ),
 );
+const plannerEvaluationStore = openFilePlannerEvaluationStore([
+  resolve(workspaceRoot, "docs/evaluations"),
+  resolve(workspaceRoot, "target/evaluations"),
+]);
 const app = createApp(createProcessStationClient(), {
   ...(allowedOrigin ? { allowedOrigin } : {}),
   plannerAttemptStore,
+  plannerEvaluationStore,
   planners: createConfiguredTaskPlanners(),
 });
 const server = serve({ fetch: app.fetch, hostname, port });

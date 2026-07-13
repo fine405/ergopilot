@@ -5,6 +5,7 @@ import {
   type PlannerAttempt,
   plannerAttemptSchema,
   plannerAttemptsResponseSchema,
+  plannerEvaluationsResponseSchema,
   plannerProviderIdSchema,
   runtimeObservationSchema,
   type TaskPlanRequest,
@@ -26,6 +27,10 @@ import {
   PlannerAttemptStoreError,
 } from "./planner-attempt-store";
 import {
+  type PlannerEvaluationStore,
+  PlannerEvaluationStoreError,
+} from "./planner-evaluation-store";
+import {
   type StationClient,
   StationRpcError,
   type StationRpcErrorCode,
@@ -41,6 +46,7 @@ export interface AppOptions {
   now?: () => number;
   allowedOrigin?: string;
   plannerAttemptStore?: PlannerAttemptStore;
+  plannerEvaluationStore?: PlannerEvaluationStore;
   planners?: TaskPlannerRegistry;
 }
 
@@ -91,6 +97,9 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
   ];
   const plannerAttemptStore =
     options.plannerAttemptStore ?? createMemoryPlannerAttemptStore();
+  const plannerEvaluationStore = options.plannerEvaluationStore ?? {
+    list: async () => [],
+  };
   const recordPlannerAttempt = async (
     context: Context<AppEnvironment>,
     attempt: unknown,
@@ -211,6 +220,13 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       context.json(
         plannerAttemptsResponseSchema.parse({
           attempts: plannerAttemptStore.list(),
+        }),
+      ),
+    )
+    .get("/api/planner-evaluations", async (context) =>
+      context.json(
+        plannerEvaluationsResponseSchema.parse({
+          reports: await plannerEvaluationStore.list(),
         }),
       ),
     )
@@ -432,6 +448,17 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
           error: {
             code: "trace_persistence_failed",
             message: "planner attempt evidence could not be persisted",
+          },
+        },
+        503,
+      );
+    }
+    if (error instanceof PlannerEvaluationStoreError) {
+      return context.json(
+        {
+          error: {
+            code: "evaluation_evidence_unavailable",
+            message: error.message,
           },
         },
         503,

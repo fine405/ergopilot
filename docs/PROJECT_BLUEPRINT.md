@@ -613,8 +613,14 @@ explicit 30-case dataset covering English/Chinese intent, unit and policy
 paraphrases, safety boundaries and prompt-injection attempts. Runs emit
 versioned, prompt-free JSON reports with per-case latency plus p50/p95; the
 first full DeepSeek baseline passed 30/30 cases with 2,860 ms p50 and 5,631 ms
-p95 latency. Cloud trace storage, repeated provider comparison and tool-call
-scoring remain future slices.
+p95 latency. A schema-validated evaluation store now discovers published and
+local artifacts, rejects conflicting evidence and serves the `/evals`
+dashboard with full-baseline metrics, provenance, report history and failed
+case details. The `/lab` route creates fresh simulator tasks for ACK loss,
+pre-effect device failure and pre-dispatch unavailability, records physical
+effect deltas and exposes reconciliation or resume only for matching runtime
+states. Cloud trace storage, actuator-jam controls, repeated provider
+comparison and tool-call/fault-coverage scoring remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 

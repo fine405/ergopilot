@@ -1,4 +1,5 @@
 import {
+  type PlannerEvaluationReport,
   type RuntimeObservation,
   type TaskPlanResponse,
   type TaskRunView,
@@ -11,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "./app";
 import { createMemoryPlannerAttemptStore } from "./planner-attempt-store";
+import { PlannerEvaluationStoreError } from "./planner-evaluation-store";
 import {
   type StationClient,
   StationRpcError,
@@ -87,6 +89,27 @@ const plannedTask: TaskPlanResponse = {
     model: "deepseek/deepseek-v4-flash",
   },
 };
+
+const evaluationReport = {
+  schemaVersion: 1,
+  generatedAt: "2026-07-13T01:24:01.271Z",
+  suite: "full",
+  provider: "deepseek",
+  model: "deepseek/deepseek-v4-flash",
+  sourceCommit: "67e43cd",
+  totalCases: 1,
+  passedCases: 1,
+  passRate: 1,
+  latencyMs: { p50: 2_860, p95: 2_860 },
+  results: [
+    {
+      caseId: "standing-critical",
+      passed: true,
+      failures: [],
+      durationMs: 2_860,
+    },
+  ],
+} as const satisfies PlannerEvaluationReport;
 
 describe("control-plane API", () => {
   it.each([
@@ -204,6 +227,43 @@ describe("control-plane API", () => {
         },
       ],
     });
+  });
+
+  it("exposes validated planner evaluation evidence", async () => {
+    const list = vi.fn(async () => [evaluationReport]);
+    const app = createApp(fakeStation(), {
+      plannerEvaluationStore: { list },
+    });
+
+    const response = await app.request("/api/planner-evaluations");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ reports: [evaluationReport] });
+    expect(list).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed without exposing evaluation storage details", async () => {
+    const app = createApp(fakeStation(), {
+      plannerEvaluationStore: {
+        list: vi.fn(async () => {
+          throw new PlannerEvaluationStoreError({
+            cause: new Error("sensitive path: /private/evaluations.json"),
+          });
+        }),
+      },
+    });
+
+    const response = await app.request("/api/planner-evaluations");
+
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: {
+        code: "evaluation_evidence_unavailable",
+        message: "planner evaluation evidence could not be loaded",
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("/private/evaluations.json");
   });
 
   it("returns a validated agent plan without starting device execution", async () => {

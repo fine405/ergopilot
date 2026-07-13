@@ -5,10 +5,8 @@ import type {
 } from "@ergopilot/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useHydrated } from "@tanstack/react-router";
-import { Boxes, Radio } from "lucide-react";
 import { useEffect } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { WorkstationTwinCard } from "@/features/workstation-twin/workstation-twin-card";
 import { controlPlane } from "@/lib/control-plane";
 
@@ -226,44 +224,6 @@ export function OperatorConsole({
 
   return (
     <div className="min-h-svh bg-background">
-      <header className="border-b bg-background/95">
-        <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-4 px-5 py-4 lg:px-8">
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Boxes className="size-4" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold tracking-tight">
-                  ErgoPilot
-                </span>
-                <Badge variant="outline" className="font-mono text-[0.65rem]">
-                  LOCAL
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Recoverable workstation agent runtime
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Radio
-              className={
-                stationQuery.data
-                  ? "size-3.5 text-status-ok"
-                  : "size-3.5 text-muted-foreground"
-              }
-              aria-hidden="true"
-            />
-            {stationQuery.data
-              ? "Station connected"
-              : stationQuery.error
-                ? "Station unavailable"
-                : "Connecting to station"}
-          </div>
-        </div>
-      </header>
-
       <main className="mx-auto grid max-w-[90rem] gap-6 px-5 py-6 lg:grid-cols-12 lg:px-8 lg:py-8">
         <aside className="space-y-6 lg:col-span-4 xl:col-span-3">
           <AgentPlannerCard

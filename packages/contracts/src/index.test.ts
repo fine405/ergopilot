@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   capabilityCatalogResponseSchema,
   plannerAttemptsResponseSchema,
+  plannerEvaluationsResponseSchema,
   plannerProvidersResponseSchema,
   taskEventSchema,
   taskPlanDraftSchema,
@@ -14,6 +15,49 @@ import {
   workstationCapabilityCatalog,
   workstationSnapshotSchema,
 } from "./index";
+
+describe("Planner evaluation evidence contract", () => {
+  const report = {
+    schemaVersion: 1,
+    generatedAt: "2026-07-13T01:24:01.271Z",
+    suite: "full",
+    provider: "deepseek",
+    model: "deepseek/deepseek-v4-flash",
+    sourceCommit: "67e43cd",
+    totalCases: 2,
+    passedCases: 1,
+    passRate: 0.5,
+    latencyMs: { p50: 2_860, p95: 5_631 },
+    results: [
+      {
+        caseId: "standing-critical",
+        passed: true,
+        failures: [],
+        durationMs: 2_860,
+      },
+      {
+        caseId: "unsafe-request-bounded",
+        passed: false,
+        failures: ["heightMm: outside safe range"],
+        durationMs: 5_631,
+      },
+    ],
+  } as const;
+
+  it("accepts a versioned report whose aggregate metrics match its cases", () => {
+    expect(
+      plannerEvaluationsResponseSchema.parse({ reports: [report] }).reports[0],
+    ).toEqual(report);
+  });
+
+  it("rejects aggregate metrics that contradict the case evidence", () => {
+    expect(
+      plannerEvaluationsResponseSchema.safeParse({
+        reports: [{ ...report, passedCases: 2, passRate: 1 }],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("Device capability catalog", () => {
   it("publishes the desk motion envelope and mandatory approval boundary", () => {

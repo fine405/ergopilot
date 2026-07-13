@@ -1,7 +1,9 @@
 import {
   type PlannerAttemptsResponse,
+  type PlannerEvaluationsResponse,
   type PlannerProvidersResponse,
   plannerAttemptsResponseSchema,
+  plannerEvaluationsResponseSchema,
   plannerProvidersResponseSchema,
   type RuntimeObservation,
   runtimeObservationSchema,
@@ -29,7 +31,7 @@ const stationCommandErrorSchema = z.object({
 
 type PlannerControlPlane = Pick<
   ControlPlane,
-  "plannerAttempts" | "plannerProviders" | "planTask"
+  "plannerAttempts" | "plannerEvaluations" | "plannerProviders" | "planTask"
 >;
 type InvokeCommand = <T>(
   command: string,
@@ -48,6 +50,7 @@ export class ControlPlaneError extends Error {
 
 export interface ControlPlane {
   plannerAttempts(): Promise<PlannerAttemptsResponse>;
+  plannerEvaluations(): Promise<PlannerEvaluationsResponse>;
   plannerProviders(): Promise<PlannerProvidersResponse>;
   planTask(request: TaskPlanRequest): Promise<TaskPlanResponse>;
   startTask(task: TaskSpec): Promise<TaskRunView>;
@@ -88,6 +91,11 @@ export class HonoControlPlane implements ControlPlane {
   async plannerAttempts(): Promise<PlannerAttemptsResponse> {
     const response = await this.#client.api["planner-attempts"].$get();
     return parseResponse(response, plannerAttemptsResponseSchema);
+  }
+
+  async plannerEvaluations(): Promise<PlannerEvaluationsResponse> {
+    const response = await this.#client.api["planner-evaluations"].$get();
+    return parseResponse(response, plannerEvaluationsResponseSchema);
   }
 
   async plannerProviders(): Promise<PlannerProvidersResponse> {
@@ -226,6 +234,10 @@ export class TauriControlPlane implements ControlPlane {
 
   plannerAttempts(): Promise<PlannerAttemptsResponse> {
     return this.planner.plannerAttempts();
+  }
+
+  plannerEvaluations(): Promise<PlannerEvaluationsResponse> {
+    return this.planner.plannerEvaluations();
   }
 
   plannerProviders(): Promise<PlannerProvidersResponse> {

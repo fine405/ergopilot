@@ -41,6 +41,12 @@ JSON artifact to `target/evaluations/`; generated artifacts remain local and
 are excluded from Git by default. Selected sanitized baselines can be promoted
 to `docs/evaluations/` for review and comparison.
 
+The local control plane exposes schema-validated artifacts at
+`GET /api/planner-evaluations`, and the `/evals` operator route renders the
+latest full baseline, experiment history and deterministic regression details.
+It scans both `docs/evaluations/` and `target/evaluations/` on every refresh,
+deduplicates matching published/local evidence and rejects conflicting copies.
+
 ## Interpretation and limits
 
 This baseline demonstrates that one model completed this bounded dataset once;
