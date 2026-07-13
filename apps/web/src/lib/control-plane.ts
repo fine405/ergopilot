@@ -49,6 +49,7 @@ export interface ControlPlane {
     runId: string,
     approvedBy: string,
   ): Promise<TaskRunView>;
+  resumeTask(runId: string): Promise<TaskRunView>;
   reconcileTask(runId: string): Promise<TaskRunView>;
   stationSnapshot(): Promise<WorkstationSnapshot>;
 }
@@ -142,6 +143,13 @@ export class HonoControlPlane implements ControlPlane {
     const response = await this.#client.api["task-runs"][
       ":runId"
     ].reconcile.$post({ param: { runId } });
+    return parseResponse(response, taskRunViewSchema);
+  }
+
+  async resumeTask(runId: string): Promise<TaskRunView> {
+    const response = await this.#client.api["task-runs"][":runId"].resume.$post(
+      { param: { runId } },
+    );
     return parseResponse(response, taskRunViewSchema);
   }
 

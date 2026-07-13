@@ -50,6 +50,7 @@ interface RunOverviewProps {
   onApproveWithAckLoss: (run: TaskRunView) => void;
   onApproveWithDeviceOffline: (run: TaskRunView) => void;
   onApproveWithDeviceUnavailableBeforeDispatch: (run: TaskRunView) => void;
+  onResume: (run: TaskRunView) => void;
   onReconcile: (run: TaskRunView) => void;
 }
 
@@ -62,6 +63,7 @@ export function RunOverview({
   onApproveWithAckLoss,
   onApproveWithDeviceOffline,
   onApproveWithDeviceUnavailableBeforeDispatch,
+  onResume,
   onReconcile,
 }: RunOverviewProps) {
   if (isLoading && !run) {
@@ -96,10 +98,9 @@ export function RunOverview({
   const targetHeight = run.task.steps[0].action.input.heightMm;
   const approvalPending =
     run.status === "awaiting_approval" && run.approval?.status === "pending";
-  const canReconcile =
-    run.status === "outcome_unknown" ||
-    (run.status === "suspended" &&
-      run.suspensionReason === "device_unavailable");
+  const canReconcile = run.status === "outcome_unknown";
+  const canResume =
+    run.status === "suspended" && run.suspensionReason === "device_unavailable";
 
   return (
     <div className="space-y-6">
@@ -115,16 +116,16 @@ export function RunOverview({
                 {run.runId}
               </CardDescription>
             </div>
-            {canReconcile && (
+            {(canReconcile || canResume) && (
               <Button
                 variant="outline"
-                onClick={() => onReconcile(run)}
+                onClick={() => (canResume ? onResume(run) : onReconcile(run))}
                 disabled={isMutating}
               >
                 <RefreshCw
                   className={isMutating ? "animate-spin" : undefined}
                 />
-                {run.status === "suspended" ? "Resume run" : "Reconcile state"}
+                {canResume ? "Resume run" : "Reconcile state"}
               </Button>
             )}
           </div>

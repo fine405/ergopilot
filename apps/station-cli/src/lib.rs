@@ -112,6 +112,13 @@ pub enum RpcRequest {
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
+    #[serde(rename = "task.resume")]
+    ResumeTask {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
     #[serde(rename = "station.snapshot")]
     StationSnapshot {
         #[serde(rename = "observedAtMs")]
@@ -182,6 +189,9 @@ pub fn run_rpc(
         } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
         RpcRequest::ReconcileTask { run_id, now_ms } => {
             serde_json::to_value(runtime.reconcile(&run_id, now_ms)?)?
+        }
+        RpcRequest::ResumeTask { run_id, now_ms } => {
+            serde_json::to_value(runtime.resume(&run_id, now_ms)?)?
         }
         RpcRequest::StationSnapshot { observed_at_ms } => {
             serde_json::to_value(runtime.station_snapshot(observed_at_ms)?)?

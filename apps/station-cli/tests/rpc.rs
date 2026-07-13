@@ -33,6 +33,29 @@ fn rpc_request_has_a_stable_cross_process_json_contract() {
 }
 
 #[test]
+fn resume_request_has_a_stable_cross_process_json_contract() {
+    let request = serde_json::from_value::<RpcRequest>(json!({
+        "method": "task.resume",
+        "params": {
+            "runId": "run-task-rpc-1",
+            "nowMs": 1_200
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({
+            "method": "task.resume",
+            "params": {
+                "runId": "run-task-rpc-1",
+                "nowMs": 1_200
+            }
+        })
+    );
+}
+
+#[test]
 fn independent_rpc_calls_share_the_durable_task_runtime() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("station.sqlite");
@@ -259,7 +282,7 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
     let resumed = invoke(
         &database,
         &authority,
-        RpcRequest::ReconcileTask {
+        RpcRequest::ResumeTask {
             run_id: run_id.into(),
             now_ms: 1_200,
         },
@@ -268,6 +291,14 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
     assert_eq!(
         resumed["result"]["suspensionReason"],
         serde_json::Value::Null
+    );
+    assert_eq!(
+        resumed["result"]["events"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["eventType"],
+        "run_resumed"
     );
 
     let final_snapshot = invoke(

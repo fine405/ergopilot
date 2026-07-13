@@ -190,7 +190,7 @@ describe("ProcessStationClient", () => {
         1_100,
       );
     const afterSuspension = await client.stationSnapshot(1_150);
-    const resumed = await client.reconcileTask(awaiting.runId, 1_200);
+    const resumed = await client.resumeTask(awaiting.runId, 1_200);
     const finalSnapshot = await client.stationSnapshot(1_250);
 
     expect(suspended.status).toBe("suspended");
@@ -201,6 +201,7 @@ describe("ProcessStationClient", () => {
     expect(resumed.runId).toBe(awaiting.runId);
     expect(resumed.status).toBe("completed");
     expect(resumed.suspensionReason).toBeNull();
+    expect(resumed.events.at(-1)?.eventType).toBe("run_resumed");
     expect(finalSnapshot.deskHeightMm).toBe(805);
     expect(finalSnapshot.movementCount).toBe(1);
   });

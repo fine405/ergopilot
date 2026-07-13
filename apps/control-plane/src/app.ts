@@ -298,6 +298,9 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
         await station.reconcileTask(context.req.param("runId"), now()),
       ),
     )
+    .post("/api/task-runs/:runId/resume", async (context) =>
+      context.json(await station.resumeTask(context.req.param("runId"), now())),
+    )
     .get("/api/station/snapshot", async (context) =>
       context.json(await station.stationSnapshot(now())),
     );

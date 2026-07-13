@@ -698,6 +698,33 @@ describe("control-plane API", () => {
     ).toHaveBeenCalledWith("run-task-api-1", "user-1", 1_100);
     expect(station.approveTask).not.toHaveBeenCalled();
   });
+
+  it("exposes resume separately from reconciliation", async () => {
+    const station = fakeStation();
+    const app = createApp(station, { now: () => 1_200 });
+
+    const response = await app.request("/api/task-runs/run-task-api-1/resume", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    expect(station.resumeTask).toHaveBeenCalledWith("run-task-api-1", 1_200);
+    expect(station.reconcileTask).not.toHaveBeenCalled();
+  });
+
+  it("keeps uncertain-outcome reconciliation on its own route", async () => {
+    const station = fakeStation();
+    const app = createApp(station, { now: () => 1_200 });
+
+    const response = await app.request(
+      "/api/task-runs/run-task-api-1/reconcile",
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(station.reconcileTask).toHaveBeenCalledWith("run-task-api-1", 1_200);
+    expect(station.resumeTask).not.toHaveBeenCalled();
+  });
 });
 
 function fakeStation(): StationClient {
@@ -729,6 +756,7 @@ function fakeStation(): StationClient {
       status: "suspended" as const,
       suspensionReason: "device_unavailable" as const,
     })),
+    resumeTask: vi.fn(async () => awaitingRun),
     reconcileTask: vi.fn(async () => awaitingRun),
     stationSnapshot: vi.fn(async () => snapshot),
   };

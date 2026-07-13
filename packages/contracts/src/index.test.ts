@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   plannerAttemptsResponseSchema,
   plannerProvidersResponseSchema,
+  taskEventSchema,
   taskPlanDraftSchema,
   taskPlanRequestSchema,
   taskPlanResponseSchema,
@@ -284,6 +285,16 @@ describe("Task planning contract", () => {
 });
 
 describe("TaskRunView contract", () => {
+  it("accepts a dedicated resume event", () => {
+    expect(
+      taskEventSchema.parse({
+        sequence: 6,
+        eventType: "run_resumed",
+        atMs: 1_200,
+      }).eventType,
+    ).toBe("run_resumed");
+  });
+
   it("keeps suspension reasons exclusive to suspended runs", () => {
     const run = taskRunViewSchema.parse({
       runId: "run-task-web-1",

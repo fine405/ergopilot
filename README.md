@@ -34,7 +34,9 @@ runnable end to end. The current slice implements:
 - a demo-only device-offline path that fails before effect and requires a
   fresh run instead of a blind retry;
 - a structured pre-dispatch device-unavailable path that suspends safely and
-  resumes the same run only after an explicit operator action;
+  resumes the same run through a dedicated operator action with durable
+  `run_resumed` evidence, while uncertain outcomes keep a separate
+  reconciliation path;
 - persisted suspension reasons that distinguish recoverable device
   unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
@@ -92,8 +94,10 @@ unavailable before dispatch (demo)**. The run becomes `suspended` before a
 station command is journaled, exposes `device_unavailable` as its suspension
 reason, and keeps the movement count at zero. Click **Resume run** after
 connectivity is safe; the same run completes, clears the reason, and the total
-movement count becomes one. Runs suspended for `stale_state` or `expired` do not
-offer resume in the operator console; create a fresh run against current state.
+movement count becomes one. The runtime accepts this dedicated resume action
+only for `device_unavailable`; runs suspended for `stale_state` or `expired`
+require a fresh run against current state. Unknown physical outcomes continue
+through **Reconcile state** instead.
 
 The deterministic CLI demos remain available:
 

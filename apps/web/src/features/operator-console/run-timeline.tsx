@@ -45,6 +45,7 @@ const taskEventPresentation = {
   run_failed: ["Run failed", XCircle, "text-destructive"],
   policy_denied: ["Policy denied", XCircle, "text-destructive"],
   run_reconciled: ["Run reconciled", CheckCircle2, "text-status-ok"],
+  run_resumed: ["Run resumed", CheckCircle2, "text-status-ok"],
   run_suspended: ["Run suspended", TriangleAlert, "text-status-warn"],
 } satisfies Record<TaskEventType, Presentation>;
 
@@ -81,6 +82,7 @@ const terminalTaskEvents = new Set<TaskEventType>([
   "run_failed",
   "policy_denied",
   "run_reconciled",
+  "run_resumed",
   "run_suspended",
 ]);
 

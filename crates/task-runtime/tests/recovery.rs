@@ -124,6 +124,11 @@ fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
         .approve(&awaiting.run_id, "user-1", 1_100)
         .unwrap();
     assert_eq!(uncertain.status, TaskRunStatus::OutcomeUnknown);
+    let resume_error = first_process.resume(&awaiting.run_id, 1_150).unwrap_err();
+    assert!(matches!(
+        resume_error,
+        TaskRuntimeError::RunNotResumable { .. }
+    ));
     drop(first_process);
 
     let simulator = SqliteSimulator::open(&database).unwrap();
@@ -175,20 +180,27 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
             .movement_count,
         0
     );
+    let reconcile_error = unavailable_process
+        .reconcile(&awaiting.run_id, 1_175)
+        .unwrap_err();
+    assert!(matches!(
+        reconcile_error,
+        TaskRuntimeError::RunNotReconcilable { .. }
+    ));
     drop(unavailable_process);
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut recovered_process = TaskRuntime::open(&database, simulator, authority).unwrap();
-    let completed = recovered_process
-        .reconcile(&awaiting.run_id, 1_200)
-        .unwrap();
+    let completed = recovered_process.resume(&awaiting.run_id, 1_200).unwrap();
 
     assert_eq!(completed.status, TaskRunStatus::Completed);
     assert_eq!(completed.suspension_reason, None);
     assert_eq!(
         completed.events.last().unwrap().event_type.as_str(),
-        "run_reconciled"
+        "run_resumed"
     );
+    let replayed = recovered_process.resume(&awaiting.run_id, 1_225).unwrap();
+    assert_eq!(replayed, completed);
     assert_eq!(
         recovered_process
             .station_snapshot(1_250)
@@ -302,6 +314,11 @@ fn reconcile_suspends_a_persisted_intent_after_station_state_changes() {
     let final_state = restarted.station_snapshot(1_201).unwrap();
     assert_eq!(final_state.desk_height_mm, 740);
     assert_eq!(final_state.movement_count, 1);
+    let resume_error = restarted.resume(&awaiting.run_id, 1_202).unwrap_err();
+    assert!(matches!(
+        resume_error,
+        TaskRuntimeError::RunNotResumable { .. }
+    ));
 }
 
 #[test]
@@ -375,6 +392,11 @@ fn expired_pre_dispatch_intent_suspends_without_moving_after_restart() {
         restarted.station_snapshot(70_001).unwrap().movement_count,
         0
     );
+    let resume_error = restarted.resume(&awaiting.run_id, 70_002).unwrap_err();
+    assert!(matches!(
+        resume_error,
+        TaskRuntimeError::RunNotResumable { .. }
+    ));
 }
 
 #[test]

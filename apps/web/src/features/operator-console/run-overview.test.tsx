@@ -81,6 +81,12 @@ const unclassifiedSuspendedRun: TaskRunView = {
   suspensionReason: null,
 };
 
+const uncertainRun: TaskRunView = {
+  ...suspendedRun,
+  status: "outcome_unknown",
+  suspensionReason: null,
+};
+
 afterEach(cleanup);
 
 describe("RunOverview", () => {
@@ -97,6 +103,7 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={onApproveWithAckLoss}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -122,6 +129,7 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={onApproveWithDeviceOffline}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -151,6 +159,7 @@ describe("RunOverview", () => {
         onApproveWithDeviceUnavailableBeforeDispatch={
           onApproveWithDeviceUnavailableBeforeDispatch
         }
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -167,7 +176,8 @@ describe("RunOverview", () => {
     );
   });
 
-  it("resumes a suspended run through reconciliation", () => {
+  it("resumes a suspended run through the dedicated action", () => {
+    const onResume = vi.fn();
     const onReconcile = vi.fn();
 
     render(
@@ -180,14 +190,41 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={onResume}
         onReconcile={onReconcile}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Resume run" }));
 
-    expect(onReconcile).toHaveBeenCalledWith(suspendedRun);
+    expect(onResume).toHaveBeenCalledWith(suspendedRun);
+    expect(onReconcile).not.toHaveBeenCalled();
     expect(screen.getByText("Run suspended safely")).toBeTruthy();
+  });
+
+  it("reconciles an uncertain outcome without calling resume", () => {
+    const onResume = vi.fn();
+    const onReconcile = vi.fn();
+
+    render(
+      <RunOverview
+        run={uncertainRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={onResume}
+        onReconcile={onReconcile}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconcile state" }));
+
+    expect(onReconcile).toHaveBeenCalledWith(uncertainRun);
+    expect(onResume).not.toHaveBeenCalled();
   });
 
   it("requires a fresh run when station state changed", () => {
@@ -201,6 +238,7 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -221,6 +259,7 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );
@@ -241,6 +280,7 @@ describe("RunOverview", () => {
         onApproveWithAckLoss={vi.fn()}
         onApproveWithDeviceOffline={vi.fn()}
         onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
         onReconcile={vi.fn()}
       />,
     );

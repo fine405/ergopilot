@@ -334,6 +334,7 @@ interface TaskRuntime {
   start(task: TaskSpec): Promise<TaskRun>
   approve(runId: string, approvedBy: string, nowMs: number): Promise<TaskRunView>
   reconcile(runId: string, nowMs: number): Promise<TaskRunView>
+  resume(runId: string, nowMs: number): Promise<TaskRunView>
   inspect(runId: string): Promise<TaskRunView>
   stationSnapshot(observedAtMs: number): Promise<WorkstationSnapshot>
 }

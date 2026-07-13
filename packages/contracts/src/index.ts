@@ -236,6 +236,7 @@ export const taskEventSchema = z
       "run_failed",
       "policy_denied",
       "run_reconciled",
+      "run_resumed",
       "run_suspended",
     ]),
     atMs: z.number().int().nonnegative(),

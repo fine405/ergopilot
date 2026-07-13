@@ -126,6 +126,7 @@ pub enum TaskEventType {
     RunFailed,
     PolicyDenied,
     RunReconciled,
+    RunResumed,
     RunSuspended,
 }
 
@@ -142,6 +143,7 @@ impl TaskEventType {
             Self::RunFailed => "run_failed",
             Self::PolicyDenied => "policy_denied",
             Self::RunReconciled => "run_reconciled",
+            Self::RunResumed => "run_resumed",
             Self::RunSuspended => "run_suspended",
         }
     }
@@ -198,6 +200,10 @@ pub enum TaskRuntimeError {
     RunNotApprovable { run_id: String },
     #[error("task run {run_id} has no matching pending device command")]
     PendingCommandNotFound { run_id: String },
+    #[error("task run {run_id} is suspended and cannot be reconciled")]
+    RunNotReconcilable { run_id: String },
+    #[error("task run {run_id} is not resumable")]
+    RunNotResumable { run_id: String },
     #[error("automatic allow is not implemented for this task goal")]
     UnsupportedAutomaticAllow,
     #[error("approval expired at {expires_at_ms}, current time is {now_ms}")]
@@ -465,18 +471,50 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         run_id: &str,
         now_ms: u64,
     ) -> Result<TaskRunView, TaskRuntimeError> {
-        let mut stored = self.load_run(run_id)?;
+        let stored = self.load_run(run_id)?;
         if matches!(
             stored.view.status,
             TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
         ) {
             return Ok(stored.view);
         }
+        if stored.view.status == TaskRunStatus::Suspended {
+            return Err(TaskRuntimeError::RunNotReconcilable {
+                run_id: run_id.into(),
+            });
+        }
+        self.continue_run(stored, now_ms, TaskEventType::RunReconciled)
+    }
+
+    pub fn resume(&mut self, run_id: &str, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
+        let stored = self.load_run(run_id)?;
+        if matches!(
+            stored.view.status,
+            TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
+        ) {
+            return Ok(stored.view);
+        }
+        if stored.view.status != TaskRunStatus::Suspended
+            || stored.view.suspension_reason != Some(SuspensionReason::DeviceUnavailable)
+        {
+            return Err(TaskRuntimeError::RunNotResumable {
+                run_id: run_id.into(),
+            });
+        }
+        self.continue_run(stored, now_ms, TaskEventType::RunResumed)
+    }
+
+    fn continue_run(
+        &mut self,
+        mut stored: StoredRun,
+        now_ms: u64,
+        completed_event: TaskEventType,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
         let (command, grant) = match (&stored.command, &stored.grant) {
             (Some(command), Some(grant)) => (command.clone(), grant.clone()),
             _ => {
                 return Err(TaskRuntimeError::PendingCommandNotFound {
-                    run_id: run_id.into(),
+                    run_id: stored.view.run_id.clone(),
                 })
             }
         };
@@ -523,7 +561,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         };
 
         let (status, event_type) = match command_view.status {
-            CommandStatus::Succeeded => (TaskRunStatus::Completed, TaskEventType::RunReconciled),
+            CommandStatus::Succeeded => (TaskRunStatus::Completed, completed_event),
             CommandStatus::Failed => (TaskRunStatus::Failed, TaskEventType::RunFailed),
             CommandStatus::Accepted | CommandStatus::Executing | CommandStatus::OutcomeUnknown => {
                 (TaskRunStatus::OutcomeUnknown, TaskEventType::OutcomeUnknown)
