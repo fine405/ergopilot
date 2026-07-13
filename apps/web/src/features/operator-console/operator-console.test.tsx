@@ -64,6 +64,15 @@ vi.mock("./planner-attempts-card", () => ({
 vi.mock("./run-overview", () => ({ RunOverview: () => null }));
 vi.mock("./station-card", () => ({ StationCard: () => null }));
 vi.mock("./task-composer", () => ({ TaskComposer: () => null }));
+vi.mock("../workstation-twin/workstation-twin-card", () => ({
+  WorkstationTwinCard: ({
+    snapshot,
+  }: {
+    snapshot: { deskHeightMm: number } | undefined;
+  }) => (
+    <div>{snapshot ? `Twin ${snapshot.deskHeightMm} mm` : "Twin loading"}</div>
+  ),
+}));
 
 const plannedTask: TaskPlanResponse = {
   task: {
@@ -126,6 +135,7 @@ describe("OperatorConsole", () => {
     await waitFor(() =>
       expect(controlPlaneMock.plannerAttempts).toHaveBeenCalledOnce(),
     );
+    await waitFor(() => expect(screen.getByText("Twin 720 mm")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: "Plan now" }));
 

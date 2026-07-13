@@ -8,6 +8,7 @@ import { useHydrated } from "@tanstack/react-router";
 import { Boxes, Radio } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { WorkstationTwinCard } from "@/features/workstation-twin/workstation-twin-card";
 import { controlPlane } from "@/lib/control-plane";
 
 import { AgentPlannerCard } from "./agent-planner-card";
@@ -270,6 +271,12 @@ export function OperatorConsole({
         </aside>
 
         <section className="space-y-6 lg:col-span-8 xl:col-span-9">
+          <WorkstationTwinCard
+            snapshot={stationQuery.data}
+            run={runQuery.data}
+            isLoading={stationQuery.isLoading || stationQuery.isFetching}
+            error={errorMessage(stationQuery.error)}
+          />
           <RunOverview
             run={runQuery.data}
             isLoading={Boolean(runId) && runQuery.isLoading}
