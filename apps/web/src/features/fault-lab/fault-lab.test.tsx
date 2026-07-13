@@ -11,6 +11,7 @@ const controlPlaneMock = vi.hoisted(() => ({
   startTask: vi.fn(),
   demoApproveTaskWithAckLoss: vi.fn(),
   demoApproveTaskWithDeviceOffline: vi.fn(),
+  demoApproveTaskWithActuatorJam: vi.fn(),
   demoApproveTaskWithDeviceUnavailableBeforeDispatch: vi.fn(),
   resumeTask: vi.fn(),
   reconcileTask: vi.fn(),
@@ -71,7 +72,91 @@ describe("FaultLab", () => {
     expect(controlPlaneMock.startTask).toHaveBeenCalledOnce();
     expect(screen.getByText("+1 physical effect")).toBeTruthy();
   });
+
+  it("shows a 60 percent actuator jam and clears it before resuming", async () => {
+    controlPlaneMock.stationSnapshot.mockReset();
+    controlPlaneMock.stationSnapshot
+      .mockResolvedValueOnce(snapshot(720, 0))
+      .mockResolvedValueOnce(snapshot(780, 1))
+      .mockResolvedValueOnce(snapshot(820, 2));
+    const jammed = actuatorFaultRun();
+    const failedCommand = jammed.command;
+    if (!failedCommand) throw new Error("fixture requires a command");
+    const completed = run("completed");
+    completed.commandAttempts = [
+      {
+        stepId: "desk-1",
+        command: failedCommand,
+        commandEvents: jammed.commandEvents,
+        deskMotionProgress: jammed.deskMotionProgress,
+      },
+    ];
+    controlPlaneMock.demoApproveTaskWithActuatorJam.mockResolvedValue(jammed);
+    controlPlaneMock.resumeTask.mockResolvedValue(completed);
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <FaultLab />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Inject Actuator jam at 60%" }),
+    );
+
+    expect(
+      await screen.findByText("recovery reason: actuator_fault"),
+    ).toBeTruthy();
+    expect(screen.getByText("780 mm")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear fault & resume" }),
+    );
+
+    expect(await screen.findByText("completed")).toBeTruthy();
+    expect(controlPlaneMock.resumeTask).toHaveBeenCalledWith(
+      "run-task-fault-1",
+    );
+    expect(screen.getAllByText("820 mm")).toHaveLength(2);
+    expect(screen.getByText("Retained failed attempt")).toBeTruthy();
+    expect(screen.getByText("stopped at 60% · 780 mm")).toBeTruthy();
+    expect(screen.getByText("execution_failed")).toBeTruthy();
+  });
 });
+
+function actuatorFaultRun(): TaskRunView {
+  const value = run("suspended", "actuator_fault");
+  if (!value.command) throw new Error("fixture requires a command");
+  value.command.failureReason = "actuator_fault";
+  value.commandEvents = [
+    {
+      sequence: 3,
+      commandId: value.command.commandId,
+      eventType: "execution_failed",
+      atMs: 1_100,
+    },
+  ];
+  value.deskMotionProgress = [
+    {
+      sequence: 7,
+      commandId: value.command.commandId,
+      progressPercent: 60,
+      deskHeightMm: 780,
+      atMs: 1_100,
+    },
+  ];
+  value.commandAttempts = [
+    {
+      stepId: "desk-1",
+      command: value.command,
+      commandEvents: value.commandEvents,
+      deskMotionProgress: value.deskMotionProgress,
+    },
+  ];
+  return value;
+}
 
 function snapshot(deskHeightMm: number, movementCount: number) {
   return {
@@ -85,7 +170,10 @@ function snapshot(deskHeightMm: number, movementCount: number) {
   };
 }
 
-function run(status: TaskRunView["status"]): TaskRunView {
+function run(
+  status: TaskRunView["status"],
+  suspensionReason: TaskRunView["suspensionReason"] = null,
+): TaskRunView {
   return {
     runId: "run-task-fault-1",
     taskId: "task-fault-1",
@@ -107,7 +195,7 @@ function run(status: TaskRunView["status"]): TaskRunView {
       ],
     },
     status,
-    suspensionReason: null,
+    suspensionReason,
     approval: null,
     command:
       status === "awaiting_approval"
@@ -115,7 +203,12 @@ function run(status: TaskRunView["status"]): TaskRunView {
         : {
             commandId: "command-run-task-fault-1",
             idempotencyKey: "run-task-fault-1:desk-1",
-            status: status === "completed" ? "succeeded" : "outcome_unknown",
+            status:
+              status === "completed"
+                ? "succeeded"
+                : status === "suspended"
+                  ? "failed"
+                  : "outcome_unknown",
             outcome:
               status === "completed"
                 ? {

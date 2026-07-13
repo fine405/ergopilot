@@ -617,10 +617,15 @@ p95 latency. A schema-validated evaluation store now discovers published and
 local artifacts, rejects conflicting evidence and serves the `/evals`
 dashboard with full-baseline metrics, provenance, report history and failed
 case details. The `/lab` route creates fresh simulator tasks for ACK loss,
-pre-effect device failure and pre-dispatch unavailability, records physical
-effect deltas and exposes reconciliation or resume only for matching runtime
-states. Cloud trace storage, actuator-jam controls, repeated provider
-comparison and tool-call/fault-coverage scoring remain future slices.
+pre-effect device failure, pre-dispatch unavailability and a known partial
+actuator jam at 60 percent. The jam increments physical state, leaves the
+original command terminal and failed with a restart-safe structured reason,
+then clears and resumes from an observed snapshot under a new command identity.
+The read model retains the failed command, events and 60 percent progress after
+successful recovery. Expired authorization permits clear-only stabilization,
+never replacement motion. Cloud trace storage, authenticated recovery-actor
+binding, seeded fault selection, timeout-based jam reconciliation, repeated
+provider comparison and tool-call/fault-coverage scoring remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 
@@ -660,6 +665,8 @@ These are pre-declared targets, not résumé claims until measured.
 - Every reported success includes a matching verified state observation.
 - Every non-terminal command is reconciled after restart.
 - An expired approval cannot authorize a command.
+- An expired actuator recovery can stabilize the device without dispatching
+  replacement motion.
 
 ### 14.2 Fault recovery
 

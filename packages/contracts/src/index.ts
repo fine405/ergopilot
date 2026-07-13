@@ -478,6 +478,7 @@ export const commandViewSchema = z
       "failed",
     ]),
     outcome: verifiedOutcomeSchema.nullable(),
+    failureReason: z.enum(["actuator_fault"]).optional(),
     wasReplayed: z.boolean(),
   })
   .strict();
@@ -544,6 +545,7 @@ export const taskEventSchema = z
 
 const suspensionReasonSchema = z.enum([
   "device_unavailable",
+  "actuator_fault",
   "stale_state",
   "expired",
 ]);
@@ -569,6 +571,7 @@ export const taskRunViewSchema = z
     commandEvents: z.array(commandEventSchema),
     deskMotionProgress: z.array(deskMotionProgressSchema).max(101),
     completedSteps: z.array(completedTaskStepSchema).max(2).optional(),
+    commandAttempts: z.array(completedTaskStepSchema).max(4).optional(),
     events: z.array(taskEventSchema),
     policyDecision: policyDecisionSchema,
   })
@@ -596,6 +599,76 @@ export const taskRunViewSchema = z
         path: ["suspensionReason"],
         message: "suspensionReason must be null unless status is suspended",
       });
+    }
+    if (run.command?.failureReason && run.command.status !== "failed") {
+      context.addIssue({
+        code: "custom",
+        path: ["command", "failureReason"],
+        message: "failureReason is only valid for a failed command",
+      });
+    }
+    const validActuatorAttempts = new Set<string>();
+    for (const [index, attempt] of (run.commandAttempts ?? []).entries()) {
+      if (attempt.command.failureReason !== "actuator_fault") continue;
+      const step = run.task.steps.find(
+        (candidate) => candidate.stepId === attempt.stepId,
+      );
+      const lastProgress = attempt.deskMotionProgress
+        .filter((progress) => progress.commandId === attempt.command.commandId)
+        .at(-1);
+      const valid =
+        step?.action.type === "desk.move_to_height" &&
+        attempt.command.status === "failed" &&
+        attempt.commandEvents.some(
+          (event) =>
+            event.commandId === attempt.command.commandId &&
+            event.eventType === "execution_failed",
+        ) &&
+        lastProgress !== undefined &&
+        lastProgress.progressPercent > 0 &&
+        lastProgress.progressPercent < 100;
+      if (valid) {
+        validActuatorAttempts.add(attempt.command.commandId);
+      } else {
+        context.addIssue({
+          code: "custom",
+          path: ["commandAttempts", index],
+          message:
+            "actuator fault attempts require a matching failed desk step, execution failure and known partial progress",
+        });
+      }
+    }
+    const currentClaimsActuatorFault =
+      run.command?.failureReason === "actuator_fault" ||
+      run.suspensionReason === "actuator_fault";
+    if (currentClaimsActuatorFault) {
+      const commandId = run.command?.commandId;
+      const lastProgress = run.deskMotionProgress
+        .filter((progress) => progress.commandId === commandId)
+        .at(-1);
+      const validCurrentEvidence =
+        run.status === "suspended" &&
+        run.suspensionReason === "actuator_fault" &&
+        run.command?.status === "failed" &&
+        run.command.failureReason === "actuator_fault" &&
+        commandId !== undefined &&
+        validActuatorAttempts.has(commandId) &&
+        run.commandEvents.some(
+          (event) =>
+            event.commandId === commandId &&
+            event.eventType === "execution_failed",
+        ) &&
+        lastProgress !== undefined &&
+        lastProgress.progressPercent > 0 &&
+        lastProgress.progressPercent < 100;
+      if (!validCurrentEvidence) {
+        context.addIssue({
+          code: "custom",
+          path: ["suspensionReason"],
+          message:
+            "current actuator_fault requires matching archived desk failure and partial-effect evidence",
+        });
+      }
     }
     if (run.status === "cancelled") {
       if (run.approval?.status !== "cancelled") {

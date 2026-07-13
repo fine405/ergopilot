@@ -1,5 +1,6 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandEventType, DeviceAction, DeviceCommand, PolicyGrant, SCHEMA_VERSION,
+    CommandEvent, CommandEventType, CommandFailureReason, CommandStatus, CommandView, DeviceAction,
+    DeviceCommand, PolicyGrant, SCHEMA_VERSION,
 };
 use serde_json::json;
 
@@ -38,6 +39,26 @@ fn device_command_has_a_stable_cross_runtime_json_contract() {
     );
     assert_eq!(
         serde_json::from_value::<DeviceCommand>(json_value).unwrap(),
+        command
+    );
+}
+
+#[test]
+fn command_failure_reason_has_a_stable_cross_runtime_json_contract() {
+    let command = CommandView {
+        command_id: "cmd-jam-1".into(),
+        idempotency_key: "run-jam-1:desk-1".into(),
+        status: CommandStatus::Failed,
+        outcome: None,
+        failure_reason: Some(CommandFailureReason::ActuatorFault),
+        was_replayed: false,
+    };
+
+    let json_value = serde_json::to_value(&command).unwrap();
+
+    assert_eq!(json_value["failureReason"], "actuator_fault");
+    assert_eq!(
+        serde_json::from_value::<CommandView>(json_value).unwrap(),
         command
     );
 }

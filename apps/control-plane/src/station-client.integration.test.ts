@@ -503,4 +503,64 @@ describe("ProcessStationClient", () => {
     expect(finalSnapshot.deskHeightMm).toBe(805);
     expect(finalSnapshot.movementCount).toBe(1);
   });
+
+  it("resumes an actuator jam from its observed 60 percent position", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ergopilot-actuator-jam-"));
+    temporaryDirectories.push(directory);
+    const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
+    const client = new ProcessStationClient({
+      binaryPath: `${workspaceRoot}/target/debug/station-cli`,
+      databasePath: `${directory}/station.sqlite`,
+      policyKey: "ergopilot-test-policy-key",
+    });
+    const task: TaskSpec = {
+      schemaVersion: 1,
+      taskId: "task-process-client-actuator-jam",
+      goal: "prepare_focus_session",
+      requestedBy: "user-1",
+      constraints: {},
+      assumptions: [],
+      steps: [
+        {
+          stepId: "desk-1",
+          action: {
+            type: "desk.move_to_height",
+            input: { heightMm: 820 },
+          },
+        },
+      ],
+    };
+
+    const awaiting = await client.startTask(task, 1_000);
+    const suspended = await client.demoApproveTaskWithActuatorJam(
+      awaiting.runId,
+      "user-1",
+      1_100,
+    );
+    const partial = await client.stationSnapshot(1_150);
+    const completed = await client.resumeTask(awaiting.runId, 1_200);
+    const finalSnapshot = await client.stationSnapshot(1_250);
+
+    expect(suspended.status).toBe("suspended");
+    expect(suspended.suspensionReason).toBe("actuator_fault");
+    expect(suspended.deskMotionProgress.at(-1)?.progressPercent).toBe(60);
+    expect(partial.deskHeightMm).toBe(780);
+    expect(partial.movementCount).toBe(1);
+    expect(completed.status).toBe("completed");
+    expect(completed.events.at(-1)?.eventType).toBe("run_resumed");
+    expect(completed.commandAttempts).toHaveLength(1);
+    expect(completed.commandAttempts?.[0]?.command.status).toBe("failed");
+    expect(completed.commandAttempts?.[0]?.command.failureReason).toBe(
+      "actuator_fault",
+    );
+    expect(
+      completed.commandAttempts?.[0]?.deskMotionProgress.at(-1)
+        ?.progressPercent,
+    ).toBe(60);
+    expect(completed.commandAttempts?.[0]?.command.commandId).not.toContain(
+      "recovery",
+    );
+    expect(finalSnapshot.deskHeightMm).toBe(820);
+    expect(finalSnapshot.movementCount).toBe(2);
+  });
 });

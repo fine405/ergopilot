@@ -19,6 +19,7 @@ pub enum NextFault {
     DeviceUnavailableBeforeDispatch,
     DeviceUnavailableBeforeEffect,
     LoseReportAfterEffect,
+    ActuatorJamAtPercent(u8),
 }
 
 pub struct SqliteSimulator {
@@ -116,7 +117,7 @@ impl SqliteSimulator {
         )
     }
 
-    fn take_execution(&mut self) -> Result<DeviceExecution, DeviceError> {
+    fn take_instant_execution(&mut self) -> Result<DeviceExecution, DeviceError> {
         match std::mem::take(&mut self.next_fault) {
             NextFault::None => Ok(DeviceExecution::Reported),
             NextFault::DeviceUnavailableBeforeDispatch
@@ -124,6 +125,9 @@ impl SqliteSimulator {
                 "simulated device unavailable before effect",
             )),
             NextFault::LoseReportAfterEffect => Ok(DeviceExecution::OutcomeUnknown),
+            NextFault::ActuatorJamAtPercent(_) => Err(DeviceError::new(
+                "simulated actuator jam is only valid for progressive desk motion",
+            )),
         }
     }
 
@@ -132,7 +136,7 @@ impl SqliteSimulator {
         action: &DeviceAction,
         expected_state_version: u64,
     ) -> Result<DeviceExecution, DeviceError> {
-        let execution = self.take_execution()?;
+        let execution = self.take_instant_execution()?;
         let updated = match action {
             DeviceAction::DeskMoveToHeight { height_mm } => self.connection.execute(
                 "UPDATE simulator_state
@@ -168,7 +172,17 @@ impl SqliteSimulator {
         command: &DeviceCommand,
         started_at_ms: u64,
     ) -> Result<DeviceExecution, DeviceError> {
-        let execution = self.take_execution()?;
+        let (execution, jam_at_percent) = match std::mem::take(&mut self.next_fault) {
+            NextFault::None => (DeviceExecution::Reported, None),
+            NextFault::DeviceUnavailableBeforeDispatch
+            | NextFault::DeviceUnavailableBeforeEffect => {
+                return Err(DeviceError::unavailable(
+                    "simulated device unavailable before effect",
+                ));
+            }
+            NextFault::LoseReportAfterEffect => (DeviceExecution::OutcomeUnknown, None),
+            NextFault::ActuatorJamAtPercent(percent) => (DeviceExecution::Reported, Some(percent)),
+        };
         let target_height_mm = command
             .action
             .target_height_mm()
@@ -183,11 +197,23 @@ impl SqliteSimulator {
             let progress_percent = step * (100 / MOTION_STEPS);
             let desk_height_mm = interpolate_height(start_height_mm, target_height_mm, step);
             let at_ms = started_at_ms.saturating_add(step_delay_ms.saturating_mul(u64::from(step)));
+            let jammed = jam_at_percent.is_some_and(|percent| progress_percent >= percent);
             if self
-                .persist_motion_step(&command.command_id, progress_percent, desk_height_mm, at_ms)
+                .persist_motion_step(
+                    &command.command_id,
+                    progress_percent,
+                    desk_height_mm,
+                    at_ms,
+                    jammed,
+                )
                 .is_err()
             {
                 return Ok(DeviceExecution::OutcomeUnknown);
+            }
+            if jammed {
+                return Err(DeviceError::actuator_fault(format!(
+                    "simulated actuator jam at {progress_percent}%"
+                )));
             }
         }
 
@@ -255,6 +281,7 @@ impl SqliteSimulator {
         progress_percent: u8,
         desk_height_mm: u16,
         at_ms: u64,
+        jammed: bool,
     ) -> Result<(), rusqlite::Error> {
         let transaction = self
             .connection
@@ -273,7 +300,7 @@ impl SqliteSimulator {
                )",
             params![
                 desk_height_mm,
-                u8::from(final_step),
+                u8::from(final_step || jammed),
                 u8::from(first_step),
                 command_id
             ],

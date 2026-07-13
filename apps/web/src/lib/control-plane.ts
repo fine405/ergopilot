@@ -65,6 +65,10 @@ export interface ControlPlane {
     runId: string,
     approvedBy: string,
   ): Promise<TaskRunView>;
+  demoApproveTaskWithActuatorJam(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView>;
   demoApproveTaskWithDeviceUnavailableBeforeDispatch(
     runId: string,
     approvedBy: string,
@@ -161,6 +165,19 @@ export class HonoControlPlane implements ControlPlane {
   ): Promise<TaskRunView> {
     const response = await this.#client.api.demo["task-runs"][":runId"][
       "approve-with-device-offline"
+    ].$post({
+      param: { runId },
+      json: { approvedBy },
+    });
+    return parseResponse(response, taskRunViewSchema);
+  }
+
+  async demoApproveTaskWithActuatorJam(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    const response = await this.#client.api.demo["task-runs"][":runId"][
+      "approve-with-actuator-jam"
     ].$post({
       param: { runId },
       json: { approvedBy },
@@ -302,6 +319,19 @@ export class TauriControlPlane implements ControlPlane {
     return this.invokeStation(
       {
         method: "demo.task.approve_with_device_offline",
+        params: { runId, approvedBy, nowMs: this.now() },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  demoApproveTaskWithActuatorJam(
+    runId: string,
+    approvedBy: string,
+  ): Promise<TaskRunView> {
+    return this.invokeStation(
+      {
+        method: "demo.task.approve_with_actuator_jam",
         params: { runId, approvedBy, nowMs: this.now() },
       },
       taskRunViewSchema,

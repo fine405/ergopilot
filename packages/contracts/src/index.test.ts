@@ -678,6 +678,154 @@ describe("TaskRunView contract", () => {
 
     expect(run.approval?.status).toBe("pending");
     expect(run.suspensionReason).toBeNull();
+    const actuatorCommandId = "cmd-run-task-web-1-desk-1";
+    const actuatorFaultRun = {
+      ...run,
+      status: "suspended",
+      suspensionReason: "actuator_fault",
+      command: {
+        commandId: actuatorCommandId,
+        idempotencyKey: "run-task-web-1:desk-1",
+        status: "failed",
+        outcome: null,
+        failureReason: "actuator_fault",
+        wasReplayed: false,
+      },
+      commandEvents: [
+        {
+          sequence: 1,
+          commandId: actuatorCommandId,
+          eventType: "execution_failed",
+          atMs: 1_100,
+        },
+      ],
+      deskMotionProgress: [
+        {
+          sequence: 1,
+          commandId: actuatorCommandId,
+          progressPercent: 60,
+          deskHeightMm: 756,
+          atMs: 1_100,
+        },
+      ],
+      commandAttempts: [
+        {
+          stepId: "desk-1",
+          command: {
+            commandId: actuatorCommandId,
+            idempotencyKey: "run-task-web-1:desk-1",
+            status: "failed",
+            outcome: null,
+            failureReason: "actuator_fault",
+            wasReplayed: false,
+          },
+          commandEvents: [
+            {
+              sequence: 1,
+              commandId: actuatorCommandId,
+              eventType: "execution_failed",
+              atMs: 1_100,
+            },
+          ],
+          deskMotionProgress: [
+            {
+              sequence: 1,
+              commandId: actuatorCommandId,
+              progressPercent: 60,
+              deskHeightMm: 756,
+              atMs: 1_100,
+            },
+          ],
+        },
+      ],
+    };
+    expect(taskRunViewSchema.parse(actuatorFaultRun).suspensionReason).toBe(
+      "actuator_fault",
+    );
+    expect(() =>
+      taskRunViewSchema.parse({
+        ...actuatorFaultRun,
+        command: null,
+        commandEvents: [],
+        deskMotionProgress: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      taskRunViewSchema.parse({
+        ...run,
+        task: {
+          ...run.task,
+          goal: "adjust_seated_support",
+          steps: [
+            {
+              stepId: "chair-1",
+              action: {
+                type: "chair.set_lumbar_support",
+                input: { levelPercent: 65 },
+              },
+            },
+          ],
+        },
+        status: "failed",
+        suspensionReason: null,
+        command: {
+          ...actuatorFaultRun.command,
+          commandId: "cmd-run-task-web-1-chair-1",
+          idempotencyKey: "run-task-web-1:chair-1",
+        },
+        commandEvents: [],
+        deskMotionProgress: [],
+        commandAttempts: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      taskRunViewSchema.parse({
+        ...run,
+        commandAttempts: [
+          {
+            ...actuatorFaultRun.commandAttempts[0],
+            stepId: "missing-step",
+          },
+        ],
+      }),
+    ).toThrow();
+    const fourActuatorAttempts = Array.from({ length: 4 }, (_, index) => {
+      const commandId = `${actuatorCommandId}-recovery-${index}`;
+      return {
+        stepId: "desk-1",
+        command: {
+          commandId,
+          idempotencyKey: `run-task-web-1:desk-1-recovery-${index}`,
+          status: "failed" as const,
+          outcome: null,
+          failureReason: "actuator_fault" as const,
+          wasReplayed: false,
+        },
+        commandEvents: [
+          {
+            sequence: index + 1,
+            commandId,
+            eventType: "execution_failed" as const,
+            atMs: 1_100 + index,
+          },
+        ],
+        deskMotionProgress: [
+          {
+            sequence: index + 1,
+            commandId,
+            progressPercent: 60,
+            deskHeightMm: 756,
+            atMs: 1_100 + index,
+          },
+        ],
+      };
+    });
+    expect(
+      taskRunViewSchema.parse({
+        ...run,
+        commandAttempts: fourActuatorAttempts,
+      }).commandAttempts,
+    ).toHaveLength(4);
     const cancelledRun = {
       ...run,
       status: "cancelled",

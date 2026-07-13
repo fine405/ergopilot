@@ -69,6 +69,12 @@ impl DemoError {
             {
                 "device_unavailable"
             }
+            Self::Task(TaskRuntimeError::Station(RuntimeError::Device(error)))
+            | Self::Runtime(RuntimeError::Device(error))
+                if error.kind() == DeviceErrorKind::ActuatorFault =>
+            {
+                "actuator_fault"
+            }
             Self::Task(
                 TaskRuntimeError::UnsupportedTaskSchemaVersion { .. }
                 | TaskRuntimeError::InvalidTaskSpec { .. },
@@ -138,6 +144,15 @@ pub enum RpcRequest {
     },
     #[serde(rename = "demo.task.approve_with_device_offline")]
     DemoApproveTaskWithDeviceOffline {
+        #[serde(rename = "runId")]
+        run_id: String,
+        #[serde(rename = "approvedBy")]
+        approved_by: String,
+        #[serde(rename = "nowMs")]
+        now_ms: u64,
+    },
+    #[serde(rename = "demo.task.approve_with_actuator_jam")]
+    DemoApproveTaskWithActuatorJam {
         #[serde(rename = "runId")]
         run_id: String,
         #[serde(rename = "approvedBy")]
@@ -228,6 +243,9 @@ pub fn invoke_rpc_with_motion_step_delay(
         RpcRequest::DemoApproveTaskWithDeviceOffline { .. } => {
             simulator.set_next_fault(NextFault::DeviceUnavailableBeforeEffect);
         }
+        RpcRequest::DemoApproveTaskWithActuatorJam { .. } => {
+            simulator.set_next_fault(NextFault::ActuatorJamAtPercent(60));
+        }
         RpcRequest::DemoApproveTaskWithDeviceUnavailableBeforeDispatch { .. } => {
             simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
         }
@@ -268,6 +286,11 @@ pub fn invoke_rpc_with_motion_step_delay(
             };
             serde_json::to_value(run)?
         }
+        RpcRequest::DemoApproveTaskWithActuatorJam {
+            run_id,
+            approved_by,
+            now_ms,
+        } => serde_json::to_value(runtime.approve(&run_id, &approved_by, now_ms)?)?,
         RpcRequest::DemoApproveTaskWithDeviceUnavailableBeforeDispatch {
             run_id,
             approved_by,

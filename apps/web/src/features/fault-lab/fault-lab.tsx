@@ -8,6 +8,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Unplug,
+  Wrench,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,14 @@ import {
 } from "./fault-scenarios";
 
 const scenarios = [
+  {
+    id: "actuator_jam_at_60_percent",
+    title: "Actuator jam at 60%",
+    description:
+      "The desk stops after a known partial effect. The failed command stays immutable while recovery starts from newly observed physical state.",
+    expected: "actuator_fault → clear → resumed",
+    icon: Wrench,
+  },
   {
     id: "ack_loss_after_effect",
     title: "ACK loss after effect",
@@ -96,7 +105,7 @@ export function FaultLab() {
       </div>
 
       <section
-        className="grid gap-4 lg:grid-cols-3"
+        className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"
         aria-label="Available fault scenarios"
       >
         {scenarios.map((scenario) => {
@@ -179,21 +188,37 @@ function FaultEvidence({
   const recoveryLabel =
     result.run.status === "outcome_unknown"
       ? "Reconcile actual state"
-      : result.run.status === "suspended"
-        ? "Resume suspended run"
-        : null;
-  const evidence = [
-    ...result.run.events.map((event) => ({
-      key: `task-${event.sequence}`,
-      type: event.eventType,
-      atMs: event.atMs,
-    })),
-    ...result.run.commandEvents.map((event) => ({
-      key: `command-${event.sequence}`,
-      type: event.eventType,
-      atMs: event.atMs,
-    })),
-  ].sort((left, right) => left.atMs - right.atMs);
+      : result.run.status === "suspended" &&
+          result.run.suspensionReason === "actuator_fault"
+        ? "Clear fault & resume"
+        : result.run.status === "suspended"
+          ? "Resume suspended run"
+          : null;
+  const evidence = Array.from(
+    new Map(
+      [
+        ...result.run.events.map((event) => ({
+          key: `task-${event.sequence}`,
+          type: event.eventType,
+          atMs: event.atMs,
+        })),
+        ...result.run.commandEvents.map((event) => ({
+          key: `command-${event.commandId}-${event.sequence}`,
+          type: event.eventType,
+          atMs: event.atMs,
+        })),
+        ...(result.run.commandAttempts?.flatMap((attempt) =>
+          attempt.commandEvents.map((event) => ({
+            key: `command-${event.commandId}-${event.sequence}`,
+            type: event.eventType,
+            atMs: event.atMs,
+          })),
+        ) ?? []),
+      ].map((event) => [event.key, event]),
+    ).values(),
+  ).sort((left, right) => left.atMs - right.atMs);
+  const failedAttempt = result.run.commandAttempts?.at(-1);
+  const failedProgress = failedAttempt?.deskMotionProgress.at(-1);
 
   return (
     <section
@@ -243,6 +268,25 @@ function FaultEvidence({
           <div className="rounded-lg bg-muted/70 p-3 font-mono text-xs text-muted-foreground">
             run {result.run.runId}
           </div>
+          {result.run.suspensionReason ? (
+            <div className="rounded-lg border border-status-warn/30 bg-status-warn/5 p-3 font-mono text-xs text-status-warn">
+              recovery reason: {result.run.suspensionReason}
+            </div>
+          ) : null}
+          {failedAttempt ? (
+            <div className="rounded-lg border border-status-warn/30 bg-status-warn/5 p-3 text-xs">
+              <div className="font-medium">Retained failed attempt</div>
+              <div className="mt-1 font-mono text-muted-foreground">
+                {failedAttempt.command.commandId}
+              </div>
+              {failedProgress ? (
+                <div className="mt-2 font-mono text-status-warn">
+                  stopped at {failedProgress.progressPercent}% ·{" "}
+                  {failedProgress.deskHeightMm} mm
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </CardContent>
         <CardFooter className="gap-2">
           {recoveryLabel ? (

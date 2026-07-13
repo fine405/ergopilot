@@ -85,6 +85,90 @@ const expiredRun: TaskRunView = {
   suspensionReason: "expired",
 };
 
+const actuatorFaultRun: TaskRunView = {
+  ...suspendedRun,
+  suspensionReason: "actuator_fault",
+  command: {
+    commandId: "command-run-web-actuator-fault",
+    idempotencyKey: "run-web-actuator-fault:desk-1",
+    status: "failed",
+    outcome: null,
+    failureReason: "actuator_fault",
+    wasReplayed: false,
+  },
+  commandEvents: [
+    {
+      sequence: 6,
+      commandId: "command-run-web-actuator-fault",
+      eventType: "execution_failed",
+      atMs: 1_700,
+    },
+  ],
+  deskMotionProgress: [
+    {
+      sequence: 7,
+      commandId: "command-run-web-actuator-fault",
+      progressPercent: 60,
+      deskHeightMm: 762,
+      atMs: 1_700,
+    },
+  ],
+};
+
+const failedActuatorCommand = actuatorFaultRun.command;
+if (!failedActuatorCommand) throw new Error("fixture requires a command");
+actuatorFaultRun.commandAttempts = [
+  {
+    stepId: "desk-1",
+    command: failedActuatorCommand,
+    commandEvents: actuatorFaultRun.commandEvents,
+    deskMotionProgress: actuatorFaultRun.deskMotionProgress,
+  },
+];
+
+const recoveredActuatorRun: TaskRunView = {
+  ...actuatorFaultRun,
+  status: "completed",
+  suspensionReason: null,
+  command: {
+    commandId: "command-run-web-actuator-fault-recovery-1",
+    idempotencyKey: "run-web-actuator-fault:desk-1-recovery-1",
+    status: "succeeded",
+    outcome: {
+      stateVersion: 3,
+      deskHeightMm: 790,
+      lumbarSupportPercent: 35,
+      verifiedAtMs: 1_900,
+    },
+    wasReplayed: false,
+  },
+  commandEvents: [
+    {
+      sequence: 7,
+      commandId: "command-run-web-actuator-fault-recovery-1",
+      eventType: "verified_succeeded",
+      atMs: 1_900,
+    },
+  ],
+  deskMotionProgress: [
+    {
+      sequence: 12,
+      commandId: "command-run-web-actuator-fault-recovery-1",
+      progressPercent: 100,
+      deskHeightMm: 790,
+      atMs: 1_900,
+    },
+  ],
+  commandAttempts: [
+    {
+      stepId: "desk-1",
+      command: failedActuatorCommand,
+      commandEvents: actuatorFaultRun.commandEvents,
+      deskMotionProgress: actuatorFaultRun.deskMotionProgress,
+    },
+  ],
+};
+
 const unclassifiedSuspendedRun: TaskRunView = {
   ...suspendedRun,
   suspensionReason: null,
@@ -432,6 +516,65 @@ describe("RunOverview", () => {
     expect(onReconcile).not.toHaveBeenCalled();
     expect(screen.getByText("Run suspended safely")).toBeTruthy();
     expect(screen.getByText("Resume attempt recorded")).toBeTruthy();
+  });
+
+  it("requires an explicit clear before resuming a partial actuator effect", () => {
+    const onResume = vi.fn();
+
+    render(
+      <RunOverview
+        run={actuatorFaultRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={onResume}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Actuator stopped after a partial effect"),
+    ).toBeTruthy();
+    expect(screen.getByText("60% · 762 mm")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear fault & resume" }),
+    );
+    expect(
+      screen.getByText("Clear the fault and authorize remaining motion?"),
+    ).toBeTruthy();
+    expect(onResume).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm clear & resume" }),
+    );
+    expect(onResume).toHaveBeenCalledWith(actuatorFaultRun);
+  });
+
+  it("retains the failed actuator attempt after the replacement command succeeds", () => {
+    render(
+      <RunOverview
+        run={recoveredActuatorRun}
+        isLoading={false}
+        error={null}
+        isMutating={false}
+        onApprove={vi.fn()}
+        onCancel={vi.fn()}
+        onApproveWithAckLoss={vi.fn()}
+        onApproveWithDeviceOffline={vi.fn()}
+        onApproveWithDeviceUnavailableBeforeDispatch={vi.fn()}
+        onResume={vi.fn()}
+        onReconcile={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Prior command attempts")).toBeTruthy();
+    expect(screen.getByText("command-run-web-actuator-fault")).toBeTruthy();
+    expect(screen.getByText("stopped at 60% · 762 mm")).toBeTruthy();
+    expect(screen.getByText("Device execution failed")).toBeTruthy();
   });
 
   it("reconciles an uncertain outcome without calling resume", () => {

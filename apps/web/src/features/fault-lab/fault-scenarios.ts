@@ -8,6 +8,7 @@ import type { ControlPlane } from "@/lib/control-plane";
 
 export type FaultScenarioId =
   | "ack_loss_after_effect"
+  | "actuator_jam_at_60_percent"
   | "device_offline_before_effect"
   | "device_unavailable_before_dispatch";
 
@@ -15,6 +16,7 @@ export type FaultLabControlPlane = Pick<
   ControlPlane,
   | "startTask"
   | "demoApproveTaskWithAckLoss"
+  | "demoApproveTaskWithActuatorJam"
   | "demoApproveTaskWithDeviceOffline"
   | "demoApproveTaskWithDeviceUnavailableBeforeDispatch"
   | "resumeTask"
@@ -69,7 +71,8 @@ export async function recoverFaultScenario(
     result.run.status === "outcome_unknown"
       ? await controlPlane.reconcileTask(result.run.runId)
       : result.run.status === "suspended" &&
-          result.run.suspensionReason === "device_unavailable"
+          (result.run.suspensionReason === "device_unavailable" ||
+            result.run.suspensionReason === "actuator_fault")
         ? await controlPlane.resumeTask(result.run.runId)
         : null;
   if (!run) throw new Error("fault scenario does not require recovery");
@@ -84,6 +87,11 @@ function approveWithFault(
   switch (scenarioId) {
     case "ack_loss_after_effect":
       return controlPlane.demoApproveTaskWithAckLoss(runId, faultLabOperator);
+    case "actuator_jam_at_60_percent":
+      return controlPlane.demoApproveTaskWithActuatorJam(
+        runId,
+        faultLabOperator,
+      );
     case "device_offline_before_effect":
       return controlPlane.demoApproveTaskWithDeviceOffline(
         runId,

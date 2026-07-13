@@ -106,7 +106,9 @@ export function RunOverview({
     run.status === "awaiting_approval" && run.approval?.status === "pending";
   const canReconcile = run.status === "outcome_unknown";
   const canResume =
-    run.status === "suspended" && run.suspensionReason === "device_unavailable";
+    run.status === "suspended" &&
+    (run.suspensionReason === "device_unavailable" ||
+      run.suspensionReason === "actuator_fault");
   const latestProgress = run.deskMotionProgress.at(-1);
   const commandTimelineEvents = collectCommandEvents(run);
 
@@ -124,7 +126,37 @@ export function RunOverview({
                 {run.runId}
               </CardDescription>
             </div>
-            {(canReconcile || canResume) && (
+            {run.suspensionReason === "actuator_fault" && canResume ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={isMutating}>
+                    <RefreshCw
+                      className={isMutating ? "animate-spin" : undefined}
+                    />
+                    Clear fault & resume
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>
+                      Clear the fault and authorize remaining motion?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                      The failed command stays terminal. The runtime will read
+                      the current physical state and, only while the original
+                      approval remains valid, issue a new bounded command for
+                      the remaining distance.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep suspended</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => onResume(run)}>
+                      Confirm clear & resume
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : canReconcile || canResume ? (
               <Button
                 variant="outline"
                 onClick={() => (canResume ? onResume(run) : onReconcile(run))}
@@ -135,7 +167,7 @@ export function RunOverview({
                 />
                 {canResume ? "Resume run" : "Reconcile state"}
               </Button>
-            )}
+            ) : null}
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -169,6 +201,42 @@ export function RunOverview({
           {latestProgress && (
             <div className="rounded-xl border bg-muted/20 p-4">
               <MotionProgress progress={latestProgress} />
+            </div>
+          )}
+
+          {(run.commandAttempts?.length ?? 0) > 0 && (
+            <div className="space-y-3 rounded-xl border border-status-warn/30 bg-status-warn/5 p-4">
+              <div>
+                <h3 className="text-sm font-medium">Prior command attempts</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Immutable failure evidence retained after recovery.
+                </p>
+              </div>
+              {run.commandAttempts?.map((attempt) => {
+                const progress = attempt.deskMotionProgress.at(-1);
+                return (
+                  <div
+                    key={attempt.command.commandId}
+                    className="grid gap-2 rounded-lg border bg-background/60 p-3 sm:grid-cols-[1fr_auto]"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-xs">
+                        {attempt.command.commandId}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {attempt.command.failureReason ??
+                          attempt.command.status}
+                      </p>
+                    </div>
+                    {progress ? (
+                      <p className="font-mono text-xs text-status-warn">
+                        stopped at {progress.progressPercent}% ·{" "}
+                        {progress.deskHeightMm} mm
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -308,6 +376,7 @@ export function RunOverview({
 function collectCommandEvents(run: TaskRunView) {
   const events = [
     ...(run.completedSteps?.flatMap((step) => step.commandEvents) ?? []),
+    ...(run.commandAttempts?.flatMap((attempt) => attempt.commandEvents) ?? []),
     ...run.commandEvents,
   ];
   return Array.from(
@@ -409,6 +478,19 @@ function RunStateAlert({ run }: { run: TaskRunView }) {
             The runtime stopped before recording a terminal device outcome.
             Resume re-checks connectivity, approval, and station state; invalid
             preconditions remain suspended.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    if (run.suspensionReason === "actuator_fault") {
+      return (
+        <Alert className="border-status-warn/30 bg-status-warn/5">
+          <TriangleAlert className="text-status-warn" />
+          <AlertTitle>Actuator stopped after a partial effect</AlertTitle>
+          <AlertDescription>
+            The failed command will not be replayed. After the obstruction is
+            cleared, resume reads the physical state and creates a new bounded
+            command for the remaining motion.
           </AlertDescription>
         </Alert>
       );

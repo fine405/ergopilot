@@ -148,6 +148,12 @@ pub struct VerifiedOutcome {
     pub verified_at_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandFailureReason {
+    ActuatorFault,
+}
+
 const fn default_lumbar_support_percent() -> u8 {
     DEFAULT_LUMBAR_SUPPORT_PERCENT
 }
@@ -159,6 +165,8 @@ pub struct CommandView {
     pub idempotency_key: String,
     pub status: CommandStatus,
     pub outcome: Option<VerifiedOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<CommandFailureReason>,
     pub was_replayed: bool,
 }
 

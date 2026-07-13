@@ -57,6 +57,31 @@ fn resume_request_has_a_stable_cross_process_json_contract() {
 }
 
 #[test]
+fn actuator_jam_request_has_a_stable_cross_process_json_contract() {
+    let request = serde_json::from_value::<RpcRequest>(json!({
+        "method": "demo.task.approve_with_actuator_jam",
+        "params": {
+            "runId": "run-task-rpc-1",
+            "approvedBy": "user-1",
+            "nowMs": 1_100
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({
+            "method": "demo.task.approve_with_actuator_jam",
+            "params": {
+                "runId": "run-task-rpc-1",
+                "approvedBy": "user-1",
+                "nowMs": 1_100
+            }
+        })
+    );
+}
+
+#[test]
 fn cancel_request_has_a_stable_cross_process_json_contract() {
     let request = serde_json::from_value::<RpcRequest>(json!({
         "method": "task.cancel",
@@ -126,6 +151,13 @@ fn rpc_error_codes_cover_transition_availability_and_fallback_categories() {
         )))
         .rpc_code(),
         "device_unavailable"
+    );
+    assert_eq!(
+        DemoError::Task(TaskRuntimeError::Station(RuntimeError::Device(
+            DeviceError::actuator_fault("actuator stopped after a partial effect"),
+        )))
+        .rpc_code(),
+        "actuator_fault"
     );
     assert_eq!(
         DemoError::Io(io::Error::other("unexpected I/O failure")).rpc_code(),
@@ -450,6 +482,72 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
     );
     assert_eq!(final_snapshot["result"]["deskHeightMm"], 805);
     assert_eq!(final_snapshot["result"]["movementCount"], 1);
+}
+
+#[test]
+fn demo_actuator_jam_rpc_resumes_the_same_run_without_replaying_the_failed_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = PolicyAuthority::new(b"ergopilot-test-policy-key").unwrap();
+    let task = TaskSpec::prepare_focus_session("task-rpc-actuator-jam", "user-1", 820);
+
+    let started = invoke(
+        &database,
+        &authority,
+        RpcRequest::StartTask {
+            task,
+            now_ms: 1_000,
+        },
+    );
+    let run_id = started["result"]["runId"].as_str().unwrap();
+    let suspended = invoke(
+        &database,
+        &authority,
+        RpcRequest::DemoApproveTaskWithActuatorJam {
+            run_id: run_id.into(),
+            approved_by: "user-1".into(),
+            now_ms: 1_100,
+        },
+    );
+
+    assert_eq!(suspended["result"]["status"], "suspended");
+    assert_eq!(suspended["result"]["suspensionReason"], "actuator_fault");
+    assert_eq!(
+        suspended["result"]["deskMotionProgress"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["progressPercent"],
+        60
+    );
+    let partial = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_150,
+        },
+    );
+    assert_eq!(partial["result"]["deskHeightMm"], 780);
+    assert_eq!(partial["result"]["movementCount"], 1);
+
+    let completed = invoke(
+        &database,
+        &authority,
+        RpcRequest::ResumeTask {
+            run_id: run_id.into(),
+            now_ms: 1_200,
+        },
+    );
+    assert_eq!(completed["result"]["status"], "completed");
+    let final_snapshot = invoke(
+        &database,
+        &authority,
+        RpcRequest::StationSnapshot {
+            observed_at_ms: 1_250,
+        },
+    );
+    assert_eq!(final_snapshot["result"]["deskHeightMm"], 820);
+    assert_eq!(final_snapshot["result"]["movementCount"], 2);
 }
 
 #[test]

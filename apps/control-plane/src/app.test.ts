@@ -833,6 +833,32 @@ describe("control-plane API", () => {
     expect(station.approveTask).not.toHaveBeenCalled();
   });
 
+  it("keeps actuator-jam injection behind an explicit demo route", async () => {
+    const station = fakeStation();
+    const app = createApp(station, { now: () => 1_100 });
+
+    const response = await app.request(
+      "/api/demo/task-runs/run-task-api-1/approve-with-actuator-jam",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approvedBy: "user-1" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "suspended",
+      suspensionReason: "actuator_fault",
+    });
+    expect(station.demoApproveTaskWithActuatorJam).toHaveBeenCalledWith(
+      "run-task-api-1",
+      "user-1",
+      1_100,
+    );
+    expect(station.approveTask).not.toHaveBeenCalled();
+  });
+
   it("keeps pre-dispatch unavailability behind an explicit demo route", async () => {
     const station = fakeStation();
     const app = createApp(station, { now: () => 1_100 });
@@ -898,6 +924,7 @@ describe("control-plane API", () => {
     ["approval_expired", 409],
     ["recovery_budget_exhausted", 409],
     ["device_unavailable", 503],
+    ["actuator_fault", 409],
     ["station_rpc_error", 502],
     ["output_limit", 502],
     ["timeout", 504],
@@ -961,6 +988,7 @@ function fakeStation(): StationClient {
       ...awaitingRun,
       status: "failed" as const,
     })),
+    demoApproveTaskWithActuatorJam: vi.fn(async () => actuatorFaultRun()),
     demoApproveTaskWithDeviceUnavailableBeforeDispatch: vi.fn(async () => ({
       ...awaitingRun,
       status: "suspended" as const,
@@ -981,6 +1009,70 @@ function fakeStation(): StationClient {
     resumeTask: vi.fn(async () => awaitingRun),
     reconcileTask: vi.fn(async () => awaitingRun),
     stationSnapshot: vi.fn(async () => snapshot),
+  };
+}
+
+function actuatorFaultRun(): TaskRunView {
+  const commandId = "cmd-run-task-api-1-desk-1";
+  return {
+    ...awaitingRun,
+    status: "suspended",
+    suspensionReason: "actuator_fault",
+    command: {
+      commandId,
+      idempotencyKey: "run-task-api-1:desk-1",
+      status: "failed",
+      outcome: null,
+      failureReason: "actuator_fault",
+      wasReplayed: true,
+    },
+    commandEvents: [
+      {
+        sequence: 3,
+        commandId,
+        eventType: "execution_failed",
+        atMs: 1_100,
+      },
+    ],
+    deskMotionProgress: [
+      {
+        sequence: 1,
+        commandId,
+        progressPercent: 60,
+        deskHeightMm: 756,
+        atMs: 1_100,
+      },
+    ],
+    commandAttempts: [
+      {
+        stepId: "desk-1",
+        command: {
+          commandId,
+          idempotencyKey: "run-task-api-1:desk-1",
+          status: "failed",
+          outcome: null,
+          failureReason: "actuator_fault",
+          wasReplayed: true,
+        },
+        commandEvents: [
+          {
+            sequence: 3,
+            commandId,
+            eventType: "execution_failed",
+            atMs: 1_100,
+          },
+        ],
+        deskMotionProgress: [
+          {
+            sequence: 1,
+            commandId,
+            progressPercent: 60,
+            deskHeightMm: 756,
+            atMs: 1_100,
+          },
+        ],
+      },
+    ],
   };
 }
 

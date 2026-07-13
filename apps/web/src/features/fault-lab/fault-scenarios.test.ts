@@ -113,6 +113,46 @@ describe("fault lab scenarios", () => {
     expect(recovered.after).toEqual(recoveredSnapshot);
   });
 
+  it("clears an actuator jam and resumes the same run from partial state", async () => {
+    const before = snapshot();
+    const partial = snapshot({
+      deskHeightMm: 780,
+      movementCount: 1,
+      stateVersion: 2,
+    });
+    const recoveredSnapshot = snapshot({
+      deskHeightMm: 820,
+      movementCount: 2,
+      stateVersion: 3,
+    });
+    const controlPlane = fakeControlPlane();
+    controlPlane.stationSnapshot
+      .mockResolvedValueOnce(before)
+      .mockResolvedValueOnce(partial)
+      .mockResolvedValueOnce(recoveredSnapshot);
+    const pending = run("awaiting_approval");
+    const suspended = actuatorFaultRun();
+    const completed = run("completed");
+    controlPlane.startTask.mockResolvedValue(pending);
+    controlPlane.demoApproveTaskWithActuatorJam.mockResolvedValue(suspended);
+    controlPlane.resumeTask.mockResolvedValue(completed);
+
+    const injected = await executeFaultScenario(
+      controlPlane,
+      "actuator_jam_at_60_percent",
+    );
+    const recovered = await recoverFaultScenario(controlPlane, injected);
+
+    expect(controlPlane.demoApproveTaskWithActuatorJam).toHaveBeenCalledWith(
+      pending.runId,
+      "fault-lab-operator",
+    );
+    expect(injected.after.deskHeightMm).toBe(780);
+    expect(controlPlane.resumeTask).toHaveBeenCalledWith(suspended.runId);
+    expect(recovered.after.deskHeightMm).toBe(820);
+    expect(recovered.after.movementCount).toBe(2);
+  });
+
   it("reconciles an unknown outcome instead of blindly repeating motion", async () => {
     const controlPlane = fakeControlPlane();
     const uncertain = run("outcome_unknown");
@@ -136,6 +176,69 @@ describe("fault lab scenarios", () => {
   });
 });
 
+function actuatorFaultRun(): TaskRunView {
+  const value = run("suspended", "actuator_fault");
+  const commandId = "cmd-run-task-fault-1-desk-1";
+  return {
+    ...value,
+    command: {
+      commandId,
+      idempotencyKey: "run-task-fault-1:desk-1",
+      status: "failed",
+      outcome: null,
+      failureReason: "actuator_fault",
+      wasReplayed: true,
+    },
+    commandEvents: [
+      {
+        sequence: 3,
+        commandId,
+        eventType: "execution_failed",
+        atMs: 1_100,
+      },
+    ],
+    deskMotionProgress: [
+      {
+        sequence: 1,
+        commandId,
+        progressPercent: 60,
+        deskHeightMm: 780,
+        atMs: 1_100,
+      },
+    ],
+    commandAttempts: [
+      {
+        stepId: "desk-1",
+        command: {
+          commandId,
+          idempotencyKey: "run-task-fault-1:desk-1",
+          status: "failed",
+          outcome: null,
+          failureReason: "actuator_fault",
+          wasReplayed: true,
+        },
+        commandEvents: [
+          {
+            sequence: 3,
+            commandId,
+            eventType: "execution_failed",
+            atMs: 1_100,
+          },
+        ],
+        deskMotionProgress: [
+          {
+            sequence: 1,
+            commandId,
+            progressPercent: 60,
+            deskHeightMm: 780,
+            atMs: 1_100,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function fakeControlPlane() {
   return {
     startTask: vi.fn<FaultLabControlPlane["startTask"]>(),
@@ -143,6 +246,8 @@ function fakeControlPlane() {
       vi.fn<FaultLabControlPlane["demoApproveTaskWithAckLoss"]>(),
     demoApproveTaskWithDeviceOffline:
       vi.fn<FaultLabControlPlane["demoApproveTaskWithDeviceOffline"]>(),
+    demoApproveTaskWithActuatorJam:
+      vi.fn<FaultLabControlPlane["demoApproveTaskWithActuatorJam"]>(),
     demoApproveTaskWithDeviceUnavailableBeforeDispatch:
       vi.fn<
         FaultLabControlPlane["demoApproveTaskWithDeviceUnavailableBeforeDispatch"]
@@ -168,7 +273,12 @@ function snapshot(
   };
 }
 
-function run(status: TaskRunView["status"]): TaskRunView {
+function run(
+  status: TaskRunView["status"],
+  suspensionReason: TaskRunView["suspensionReason"] = status === "suspended"
+    ? "device_unavailable"
+    : null,
+): TaskRunView {
   return {
     runId: "run-task-fault-1",
     taskId: "task-fault-1",
@@ -190,7 +300,7 @@ function run(status: TaskRunView["status"]): TaskRunView {
       ],
     },
     status,
-    suspensionReason: status === "suspended" ? "device_unavailable" : null,
+    suspensionReason,
     approval: null,
     command: null,
     commandEvents: [],

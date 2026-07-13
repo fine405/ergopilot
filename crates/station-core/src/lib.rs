@@ -1,6 +1,7 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandEventType, CommandStatus, CommandView, DeskMotionProgress, DeviceAction,
-    DeviceCommand, PolicyGrant, VerifiedOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandEvent, CommandEventType, CommandFailureReason, CommandStatus, CommandView,
+    DeskMotionProgress, DeviceAction, DeviceCommand, PolicyGrant, VerifiedOutcome,
+    WorkstationSnapshot, SCHEMA_VERSION,
 };
 use policy_core::{PolicyError, PolicyVerifier};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -21,6 +22,7 @@ pub enum DeviceExecution {
 pub enum DeviceErrorKind {
     Other,
     Unavailable,
+    ActuatorFault,
 }
 
 #[derive(Debug, Error)]
@@ -45,6 +47,13 @@ impl DeviceError {
         }
     }
 
+    pub fn actuator_fault(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            kind: DeviceErrorKind::ActuatorFault,
+        }
+    }
+
     pub fn kind(&self) -> DeviceErrorKind {
         self.kind
     }
@@ -55,8 +64,9 @@ pub trait DeviceAdapter {
 
     /// Applies an action only if the device is still at `expected_state_version`.
     /// The adapter owns this final compare-and-set check at the effect boundary.
-    /// An error must mean no physical effect occurred; if the adapter cannot
-    /// prove that, it returns `DeviceExecution::OutcomeUnknown` instead.
+    /// An error must mean no physical effect occurred, except for a structured
+    /// actuator fault that reports a known partial effect. If the adapter cannot
+    /// determine the physical outcome, it returns `DeviceExecution::OutcomeUnknown`.
     fn apply(
         &mut self,
         action: &DeviceAction,
@@ -98,6 +108,8 @@ pub enum RuntimeError {
     Policy(#[from] PolicyError),
     #[error("command journal contains an unknown status: {0}")]
     CorruptJournal(String),
+    #[error("command journal contains an unknown failure reason: {0}")]
+    CorruptFailureReason(String),
     #[error("command journal contains an unknown event type: {0}")]
     CorruptEventType(String),
     #[error("command {command_id} is not pending reconciliation")]
@@ -156,6 +168,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 command_json TEXT NOT NULL,
                 status TEXT NOT NULL,
                 outcome_json TEXT,
+                failure_reason TEXT,
                 created_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
@@ -168,6 +181,17 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             );
             ",
         )?;
+        let has_failure_reason = {
+            let mut statement = connection.prepare("PRAGMA table_info(commands)")?;
+            let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+            columns
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .any(|column| column == "failure_reason")
+        };
+        if !has_failure_reason {
+            connection.execute("ALTER TABLE commands ADD COLUMN failure_reason TEXT", [])?;
+        }
 
         Ok(Self {
             connection,
@@ -244,7 +268,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         let existing = self
             .connection
             .query_row(
-                "SELECT command_id, command_json, status, outcome_json
+                "SELECT command_id, command_json, status, outcome_json, failure_reason
                  FROM commands WHERE idempotency_key = ?1",
                 params![&command.idempotency_key],
                 |row| {
@@ -253,12 +277,15 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
             .optional()?;
 
-        if let Some((command_id, stored_command_json, status, outcome_json)) = existing {
+        if let Some((command_id, stored_command_json, status, outcome_json, failure_reason)) =
+            existing
+        {
             if stored_command_json == command_json {
                 return Ok(Some(CommandView {
                     command_id,
@@ -267,6 +294,10 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                     outcome: outcome_json
                         .as_deref()
                         .map(serde_json::from_str)
+                        .transpose()?,
+                    failure_reason: failure_reason
+                        .as_deref()
+                        .map(command_failure_reason_from_db)
                         .transpose()?,
                     was_replayed: true,
                 }));
@@ -329,10 +360,13 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         let execution = match self.device.apply_command(&command, now_ms) {
             Ok(execution) => execution,
             Err(error) => {
+                let failure_reason = (error.kind() == DeviceErrorKind::ActuatorFault)
+                    .then_some(CommandFailureReason::ActuatorFault);
                 self.transition_with_event(
                     &command.command_id,
                     "failed",
                     None,
+                    failure_reason,
                     CommandEventType::ExecutionFailed,
                     now_ms,
                 )?;
@@ -344,6 +378,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 &command.command_id,
                 "outcome_unknown",
                 None,
+                None,
                 CommandEventType::OutcomeUnknown,
                 now_ms,
             )?;
@@ -352,6 +387,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 idempotency_key: command.idempotency_key,
                 status: CommandStatus::OutcomeUnknown,
                 outcome: None,
+                failure_reason: None,
                 was_replayed: false,
             });
         }
@@ -362,6 +398,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 self.transition_with_event(
                     &command.command_id,
                     "outcome_unknown",
+                    None,
                     None,
                     CommandEventType::OutcomeUnknown,
                     now_ms,
@@ -388,6 +425,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             &command.command_id,
             status_text,
             outcome_json.as_deref(),
+            None,
             if verified {
                 CommandEventType::VerifiedSucceeded
             } else {
@@ -401,6 +439,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
             idempotency_key: command.idempotency_key,
             status,
             outcome,
+            failure_reason: None,
             was_replayed: false,
         })
     }
@@ -442,6 +481,13 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         command_id: &str,
     ) -> Result<Vec<DeskMotionProgress>, RuntimeError> {
         Ok(self.device.desk_motion_progress(command_id)?)
+    }
+
+    /// Clears adapter-owned transient state for a terminal command. This does
+    /// not authorize or dispatch a replacement action.
+    pub fn prepare_command_recovery(&mut self, command_id: &str) -> Result<(), RuntimeError> {
+        self.device.prepare_reconciliation(command_id)?;
+        Ok(())
     }
 
     pub fn reconcile_pending(&mut self, now_ms: u64) -> Result<Vec<CommandView>, RuntimeError> {
@@ -521,6 +567,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 &command_id,
                 "succeeded",
                 Some(&outcome_json),
+                None,
                 CommandEventType::ReconciledSucceeded,
                 now_ms,
             )?;
@@ -529,6 +576,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 idempotency_key,
                 status: CommandStatus::Succeeded,
                 outcome: Some(outcome),
+                failure_reason: None,
                 was_replayed: false,
             })
         } else {
@@ -540,6 +588,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 self.transition_with_event(
                     &command_id,
                     "outcome_unknown",
+                    None,
                     None,
                     CommandEventType::ReconciliationPending,
                     now_ms,
@@ -553,6 +602,7 @@ impl<D: DeviceAdapter> StationRuntime<D> {
                 idempotency_key,
                 status,
                 outcome: None,
+                failure_reason: None,
                 was_replayed: false,
             })
         }
@@ -603,15 +653,22 @@ impl<D: DeviceAdapter> StationRuntime<D> {
         command_id: &str,
         status: &str,
         outcome_json: Option<&str>,
+        failure_reason: Option<CommandFailureReason>,
         event_type: CommandEventType,
         at_ms: u64,
     ) -> Result<(), RuntimeError> {
         let transaction = self.connection.transaction()?;
         transaction.execute(
             "UPDATE commands
-             SET status = ?2, outcome_json = ?3, updated_at_ms = ?4
+             SET status = ?2, outcome_json = ?3, failure_reason = ?4, updated_at_ms = ?5
              WHERE command_id = ?1",
-            params![command_id, status, outcome_json, at_ms],
+            params![
+                command_id,
+                status,
+                outcome_json,
+                failure_reason.map(command_failure_reason_as_db),
+                at_ms
+            ],
         )?;
         append_event(&transaction, command_id, event_type, at_ms)?;
         transaction.commit()?;
@@ -641,6 +698,19 @@ fn command_status_from_db(status: &str) -> Result<CommandStatus, RuntimeError> {
         "succeeded" => Ok(CommandStatus::Succeeded),
         "failed" => Ok(CommandStatus::Failed),
         other => Err(RuntimeError::CorruptJournal(other.to_owned())),
+    }
+}
+
+fn command_failure_reason_as_db(reason: CommandFailureReason) -> &'static str {
+    match reason {
+        CommandFailureReason::ActuatorFault => "actuator_fault",
+    }
+}
+
+fn command_failure_reason_from_db(reason: &str) -> Result<CommandFailureReason, RuntimeError> {
+    match reason {
+        "actuator_fault" => Ok(CommandFailureReason::ActuatorFault),
+        other => Err(RuntimeError::CorruptFailureReason(other.to_owned())),
     }
 }
 

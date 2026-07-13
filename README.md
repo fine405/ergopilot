@@ -41,6 +41,10 @@ desktop station are runnable end to end. The current slice implements:
   atomically persisted before device access, capped at three, and completed
   with durable `run_resumed` evidence, while uncertain outcomes keep a
   separate reconciliation path;
+- a deterministic actuator-jam path that persists a known 60% physical effect,
+  journals `actuator_fault` across process restarts, suspends the run, and
+  resumes from a fresh station snapshot using a new command and idempotency key
+  after explicit operator clearance; the failed attempt remains inspectable;
 - persisted suspension reasons that distinguish recoverable device
   unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
@@ -64,9 +68,10 @@ desktop station are runnable end to end. The current slice implements:
   station database and policy signing key behind one typed Rust IPC command;
 - a responsive operator console for plan inspection, explicit approval,
   station telemetry and evidence-backed completion;
-- a dedicated `/lab` surface that creates fresh simulator tasks for ACK loss,
-  pre-effect device failure and recoverable pre-dispatch unavailability, then
-  displays durable run evidence and the matching safe recovery action;
+- a dedicated `/lab` surface that creates fresh simulator tasks for actuator
+  jam, ACK loss, pre-effect device failure and recoverable pre-dispatch
+  unavailability, then displays durable run evidence and the matching safe
+  recovery action;
 - a dedicated `/evals` surface that validates, deduplicates and compares
   published plus locally generated planner reports without exposing prompts;
 - URL-persisted run selection, so an in-progress approval survives refresh.
@@ -77,7 +82,8 @@ runtime in process through Tauri and stores its SQLite journal and generated
 policy key in the OS application-data directory. Natural-language planning is
 still delegated to the loopback Hono service in this slice. Authenticated
 remote coordination, a Durable Object session and a durable cloud workflow
-remain future work.
+remain future work. Approval and recovery actor strings are local demo
+assertions until that authentication boundary is implemented.
 
 ## Run locally
 
@@ -164,6 +170,15 @@ loss after effect**, inspect the before/after movement evidence, then choose
 **Reconcile actual state**. The same page exposes the definite offline and
 recoverable pre-dispatch scenarios without requiring an LLM provider.
 
+For a visible partial-effect recovery, choose **Inject Actuator jam at 60%**.
+The Rust simulator stops the desk at 60% of the requested distance, increments
+the physical state version, journals the original command as failed and keeps
+the task safely suspended. Choose **Clear fault & resume** to read the partial
+height and finish the same run with a fresh command identity; the failed
+command is never replayed. The operator console requires a second confirmation
+and retains the original `execution_failed` event and 60% progress after the
+replacement command succeeds.
+
 To exercise a definite pre-effect failure, choose **Approve + device offline
 (demo)**. The station command has already been journaled, so the run becomes
 `failed`, the timeline records `execution_failed`, and the movement count stays
@@ -176,9 +191,11 @@ station command is journaled, exposes `device_unavailable` as its suspension
 reason, and keeps the movement count at zero. Click **Resume run** after
 connectivity is safe; the same run completes, clears the reason, and the total
 movement count becomes one. The runtime accepts this dedicated resume action
-only for `device_unavailable`; runs suspended for `stale_state` or `expired`
-require a fresh run against current state. Unknown physical outcomes continue
-through **Reconcile state** instead.
+for `device_unavailable` and the explicitly cleared `actuator_fault`; runs
+suspended for `stale_state` or `expired` require a fresh run against current
+state. An expired jam recovery clears the simulator interlock without issuing
+new motion, so a fresh approved run can proceed. Unknown physical outcomes
+continue through **Reconcile state** instead.
 
 To exercise cancellation, create a task and choose **Cancel run** before
 approval. The run becomes `cancelled`, records `run_cancelled`, and remains

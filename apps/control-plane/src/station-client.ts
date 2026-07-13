@@ -33,6 +33,11 @@ export interface StationClient {
     approvedBy: string,
     nowMs: number,
   ): Promise<TaskRunView>;
+  demoApproveTaskWithActuatorJam(
+    runId: string,
+    approvedBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView>;
   demoApproveTaskWithDeviceUnavailableBeforeDispatch(
     runId: string,
     approvedBy: string,
@@ -63,6 +68,10 @@ type RpcRequest =
       params: { runId: string; approvedBy: string; nowMs: number };
     }
   | {
+      method: "demo.task.approve_with_actuator_jam";
+      params: { runId: string; approvedBy: string; nowMs: number };
+    }
+  | {
       method: "demo.task.approve_with_device_unavailable_before_dispatch";
       params: { runId: string; approvedBy: string; nowMs: number };
     }
@@ -79,6 +88,7 @@ const stationRpcErrorCodeSchema = z.enum([
   "approval_expired",
   "recovery_budget_exhausted",
   "device_unavailable",
+  "actuator_fault",
   "station_rpc_error",
   "output_limit",
   "timeout",
@@ -200,6 +210,20 @@ export class ProcessStationClient implements StationClient {
     return this.#invoke(
       {
         method: "demo.task.approve_with_device_offline",
+        params: { runId, approvedBy, nowMs },
+      },
+      taskRunViewSchema,
+    );
+  }
+
+  demoApproveTaskWithActuatorJam(
+    runId: string,
+    approvedBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView> {
+    return this.#invoke(
+      {
+        method: "demo.task.approve_with_actuator_jam",
         params: { runId, approvedBy, nowMs },
       },
       taskRunViewSchema,

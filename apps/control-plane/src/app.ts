@@ -74,6 +74,7 @@ function stationRpcStatus(
     case "invalid_transition":
     case "approval_expired":
     case "recovery_budget_exhausted":
+    case "actuator_fault":
       return 409;
     case "device_unavailable":
       return 503;
@@ -385,6 +386,19 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       async (context) => {
         const { approvedBy } = context.req.valid("json");
         const run = await station.demoApproveTaskWithDeviceOffline(
+          context.req.param("runId"),
+          approvedBy,
+          now(),
+        );
+        return context.json(run);
+      },
+    )
+    .post(
+      "/api/demo/task-runs/:runId/approve-with-actuator-jam",
+      zValidator("json", approvalRequestSchema),
+      async (context) => {
+        const { approvedBy } = context.req.valid("json");
+        const run = await station.demoApproveTaskWithActuatorJam(
           context.req.param("runId"),
           approvedBy,
           now(),

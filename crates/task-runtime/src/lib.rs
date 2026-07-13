@@ -1,6 +1,7 @@
 use ergopilot_protocol::{
-    CommandEvent, CommandStatus, CommandView, DeskMotionProgress, DeviceAction, DeviceCommand,
-    PolicyDecision, PolicyGrant, PolicyOutcome, WorkstationSnapshot, SCHEMA_VERSION,
+    CommandEvent, CommandFailureReason, CommandStatus, CommandView, DeskMotionProgress,
+    DeviceAction, DeviceCommand, PolicyDecision, PolicyGrant, PolicyOutcome, WorkstationSnapshot,
+    SCHEMA_VERSION,
 };
 use policy_core::{GrantRequest, PolicyAuthority, PolicyError};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -146,6 +147,7 @@ pub enum TaskRunStatus {
 #[serde(rename_all = "snake_case")]
 pub enum SuspensionReason {
     DeviceUnavailable,
+    ActuatorFault,
     StaleState,
     Expired,
 }
@@ -243,6 +245,8 @@ pub struct TaskRunView {
     pub desk_motion_progress: Vec<DeskMotionProgress>,
     #[serde(default)]
     pub completed_steps: Vec<CompletedTaskStep>,
+    #[serde(default)]
+    pub command_attempts: Vec<CompletedTaskStep>,
     pub events: Vec<TaskEvent>,
     pub policy_decision: PolicyDecision,
 }
@@ -308,6 +312,11 @@ struct StoredRun {
 
 enum ContinuationUpdate {
     Suspended(SuspensionReason),
+    ActuatorFault {
+        command: CommandView,
+        command_events: Vec<CommandEvent>,
+        desk_motion_progress: Vec<DeskMotionProgress>,
+    },
     CommandResult {
         status: TaskRunStatus,
         event_type: TaskEventType,
@@ -390,6 +399,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             command_events: Vec::new(),
             desk_motion_progress: Vec::new(),
             completed_steps: Vec::new(),
+            command_attempts: Vec::new(),
             events: vec![
                 TaskEvent {
                     sequence: 1,
@@ -463,15 +473,26 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     return Ok(stored.view);
                 }
                 Err(error @ RuntimeError::Device(_)) => {
-                    let unavailable = matches!(
-                        &error,
-                        RuntimeError::Device(device_error)
-                            if device_error.kind() == DeviceErrorKind::Unavailable
-                    );
+                    let device_error_kind = match &error {
+                        RuntimeError::Device(device_error) => device_error.kind(),
+                        _ => unreachable!("matched RuntimeError::Device"),
+                    };
                     if let Some(command_view) = self.station.inspect_command(&command)? {
+                        if device_error_kind == DeviceErrorKind::ActuatorFault
+                            || command_is_actuator_fault(&command_view)
+                        {
+                            stored.view.status = TaskRunStatus::Suspended;
+                            stored.view.suspension_reason = Some(SuspensionReason::ActuatorFault);
+                            stored.view.command = Some(command_view);
+                            self.refresh_command_events(&mut stored)?;
+                            record_current_command_attempt(&mut stored)?;
+                            append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                            self.save_run(&stored, now_ms)?;
+                            return Ok(stored.view);
+                        }
                         device_error = Some(error);
                         command_view
-                    } else if unavailable {
+                    } else if device_error_kind == DeviceErrorKind::Unavailable {
                         stored.view.status = TaskRunStatus::Suspended;
                         stored.view.suspension_reason = Some(SuspensionReason::DeviceUnavailable);
                         append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
@@ -486,6 +507,16 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 }
                 Err(error) => return Err(error.into()),
             };
+            if command_is_actuator_fault(&command_view) {
+                stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(SuspensionReason::ActuatorFault);
+                stored.view.command = Some(command_view);
+                self.refresh_command_events(&mut stored)?;
+                record_current_command_attempt(&mut stored)?;
+                append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+                self.save_run(&stored, now_ms)?;
+                return Ok(stored.view);
+            }
             let (status, event_type) = task_outcome(command_view.status, completed_event);
             stored.view.status = status;
             stored.view.suspension_reason = None;
@@ -701,12 +732,23 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         ) {
             return Ok(current.view);
         }
+        let suspension_reason = current.view.suspension_reason;
         if current.view.status != TaskRunStatus::Suspended
-            || current.view.suspension_reason != Some(SuspensionReason::DeviceUnavailable)
+            || !matches!(
+                suspension_reason,
+                Some(SuspensionReason::DeviceUnavailable | SuspensionReason::ActuatorFault)
+            )
         {
             return Err(TaskRuntimeError::RunNotResumable {
                 run_id: run_id.into(),
             });
+        }
+        if suspension_reason == Some(SuspensionReason::ActuatorFault) {
+            let (stored, reserved) = self.reserve_actuator_recovery(&current, now_ms)?;
+            if !reserved {
+                return Ok(stored.view);
+            }
+            return self.execute_approved_steps(stored, now_ms, TaskEventType::RunResumed);
         }
         if let Some(command) = &current.command {
             if let Some(command_view) = self.station.inspect_command(command)? {
@@ -803,6 +845,110 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         Ok(stored)
     }
 
+    fn reserve_actuator_recovery(
+        &mut self,
+        current: &StoredRun,
+        now_ms: u64,
+    ) -> Result<(StoredRun, bool), TaskRuntimeError> {
+        let run_id = current.view.run_id.clone();
+        let failed_command_id = current
+            .command
+            .as_ref()
+            .map(|command| command.command_id.clone())
+            .ok_or_else(|| TaskRuntimeError::PendingCommandNotFound {
+                run_id: run_id.clone(),
+            })?;
+        let expires_at_ms = current
+            .view
+            .approval
+            .as_ref()
+            .map(|approval| approval.expires_at_ms)
+            .ok_or_else(|| TaskRuntimeError::CorruptRun {
+                run_id: run_id.clone(),
+            })?;
+        self.station.prepare_command_recovery(&failed_command_id)?;
+        let observed_state_version = if expires_at_ms > now_ms {
+            Some(self.station.snapshot(now_ms)?.state_version)
+        } else {
+            None
+        };
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![&run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.clone(),
+            })?;
+        let mut stored = deserialize_stored_run(&run_id, &stored_json)?;
+        if stored.view.status != TaskRunStatus::Suspended
+            || stored.view.suspension_reason != Some(SuspensionReason::ActuatorFault)
+        {
+            transaction.commit()?;
+            return Ok((stored, false));
+        }
+        let attempt_count = stored
+            .view
+            .events
+            .iter()
+            .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+            .count();
+        if attempt_count >= MAX_RECOVERY_ATTEMPTS {
+            return Err(TaskRuntimeError::RecoveryBudgetExhausted {
+                run_id,
+                max_attempts: MAX_RECOVERY_ATTEMPTS,
+            });
+        }
+        append_event(&mut stored.view, TaskEventType::RunResumeAttempted, now_ms);
+        if expires_at_ms <= now_ms {
+            stored.view.suspension_reason = Some(SuspensionReason::Expired);
+            append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+            let stored_json = serde_json::to_string(&stored)?;
+            transaction.execute(
+                "UPDATE task_runs
+                 SET stored_json = ?1, updated_at_ms = ?2
+                 WHERE run_id = ?3",
+                params![stored_json, now_ms, &run_id],
+            )?;
+            transaction.commit()?;
+            return Ok((stored, false));
+        }
+
+        stored.expected_state_version = observed_state_version;
+        let recovery_attempt = attempt_count + 1;
+        let mut command = command_for(&stored, &run_id, expires_at_ms)?;
+        command.command_id = format!("{}-recovery-{recovery_attempt}", command.command_id);
+        command.idempotency_key =
+            format!("{}-recovery-{recovery_attempt}", command.idempotency_key);
+        command.policy_grant_id =
+            format!("{}-recovery-{recovery_attempt}", command.policy_grant_id);
+        let grant = issue_grant(&self.policy_authority, &command, now_ms)?;
+        stored.command = Some(command);
+        stored.grant = Some(grant);
+        stored.view.status = TaskRunStatus::Executing;
+        stored.view.suspension_reason = None;
+        record_current_command_attempt(&mut stored)?;
+        stored.view.command = None;
+        stored.view.command_events.clear();
+        stored.view.desk_motion_progress.clear();
+        append_event(&mut stored.view, TaskEventType::CommandDispatched, now_ms);
+        let stored_json = serde_json::to_string(&stored)?;
+        transaction.execute(
+            "UPDATE task_runs
+             SET stored_json = ?1, updated_at_ms = ?2
+             WHERE run_id = ?3",
+            params![stored_json, now_ms, &run_id],
+        )?;
+        transaction.commit()?;
+        Ok((stored, true))
+    }
+
     fn continue_run(
         &mut self,
         stored: StoredRun,
@@ -871,6 +1017,23 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             Err(error) => return Err(error.into()),
         };
 
+        if command_is_actuator_fault(&command_view) {
+            let command_events = self.station.events(&command.command_id)?;
+            let desk_motion_progress = self.station.desk_motion_progress(&command.command_id)?;
+            let (view, _) = self.commit_continuation_update(
+                &run_id,
+                expected_status,
+                expected_reason,
+                ContinuationUpdate::ActuatorFault {
+                    command: command_view,
+                    command_events,
+                    desk_motion_progress,
+                },
+                now_ms,
+            )?;
+            return Ok(view);
+        }
+
         let (status, event_type) = task_outcome(command_view.status, completed_event);
         let command_events = self.station.events(&command.command_id)?;
         let desk_motion_progress = self.station.desk_motion_progress(&command.command_id)?;
@@ -926,6 +1089,19 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             ContinuationUpdate::Suspended(reason) => {
                 stored.view.status = TaskRunStatus::Suspended;
                 stored.view.suspension_reason = Some(reason);
+                append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
+            }
+            ContinuationUpdate::ActuatorFault {
+                command,
+                command_events,
+                desk_motion_progress,
+            } => {
+                stored.view.status = TaskRunStatus::Suspended;
+                stored.view.suspension_reason = Some(SuspensionReason::ActuatorFault);
+                stored.view.command = Some(command);
+                stored.view.command_events = command_events;
+                stored.view.desk_motion_progress = desk_motion_progress;
+                record_current_command_attempt(&mut stored)?;
                 append_event_once(&mut stored.view, TaskEventType::RunSuspended, now_ms);
             }
             ContinuationUpdate::CommandResult {
@@ -1117,6 +1293,45 @@ fn record_completed_step(stored: &mut StoredRun) -> Result<(), TaskRuntimeError>
         desk_motion_progress: stored.view.desk_motion_progress.clone(),
     });
     Ok(())
+}
+
+fn record_current_command_attempt(stored: &mut StoredRun) -> Result<(), TaskRuntimeError> {
+    let command = stored
+        .view
+        .command
+        .clone()
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+    if stored
+        .view
+        .command_attempts
+        .iter()
+        .any(|attempt| attempt.command.command_id == command.command_id)
+    {
+        return Ok(());
+    }
+    let step_id = stored
+        .view
+        .task
+        .steps
+        .get(stored.current_step_index)
+        .map(|step| step.step_id.clone())
+        .ok_or_else(|| TaskRuntimeError::CorruptRun {
+            run_id: stored.view.run_id.clone(),
+        })?;
+    stored.view.command_attempts.push(CompletedTaskStep {
+        step_id,
+        command,
+        command_events: stored.view.command_events.clone(),
+        desk_motion_progress: stored.view.desk_motion_progress.clone(),
+    });
+    Ok(())
+}
+
+fn command_is_actuator_fault(command: &CommandView) -> bool {
+    command.status == CommandStatus::Failed
+        && command.failure_reason == Some(CommandFailureReason::ActuatorFault)
 }
 
 fn prepare_next_step(
