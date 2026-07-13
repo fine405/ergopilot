@@ -18,6 +18,7 @@ try {
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const hostname = "127.0.0.1";
 const allowedOrigin = process.env.ERGOPILOT_WEB_ORIGIN;
+const operatorId = process.env.ERGOPILOT_OPERATOR_ID ?? "local-operator";
 const workspaceRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const plannerAttemptStore = await openFilePlannerAttemptStore(
   resolve(
@@ -32,6 +33,7 @@ const plannerEvaluationStore = openFilePlannerEvaluationStore([
 ]);
 const app = createApp(createProcessStationClient(), {
   ...(allowedOrigin ? { allowedOrigin } : {}),
+  operatorId,
   plannerAttemptStore,
   plannerEvaluationStore,
   planners: createConfiguredTaskPlanners(),

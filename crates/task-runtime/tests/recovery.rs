@@ -35,6 +35,10 @@ struct ApplyFailureDevice {
 
 struct CrashOnSnapshot;
 
+struct CrashBeforeRecoveryClear {
+    simulator: SqliteSimulator,
+}
+
 struct BlockingSimulator {
     simulator: SqliteSimulator,
     entered: Arc<Barrier>,
@@ -174,6 +178,39 @@ impl DeviceAdapter for CrashOnSnapshot {
     }
 }
 
+impl DeviceAdapter for CrashBeforeRecoveryClear {
+    fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
+        self.simulator.snapshot(observed_at_ms)
+    }
+
+    fn apply(
+        &mut self,
+        action: &DeviceAction,
+        expected_state_version: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        self.simulator.apply(action, expected_state_version)
+    }
+
+    fn apply_command(
+        &mut self,
+        command: &DeviceCommand,
+        started_at_ms: u64,
+    ) -> Result<DeviceExecution, DeviceError> {
+        self.simulator.apply_command(command, started_at_ms)
+    }
+
+    fn desk_motion_progress(
+        &self,
+        command_id: &str,
+    ) -> Result<Vec<DeskMotionProgress>, DeviceError> {
+        self.simulator.desk_motion_progress(command_id)
+    }
+
+    fn prepare_reconciliation(&mut self, _command_id: &str) -> Result<(), DeviceError> {
+        panic!("simulated process crash before clearing the actuator interlock");
+    }
+}
+
 impl DeviceAdapter for BlockingSimulator {
     fn snapshot(&mut self, observed_at_ms: u64) -> Result<WorkstationSnapshot, DeviceError> {
         if std::mem::take(&mut self.block_next_snapshot) {
@@ -229,7 +266,9 @@ fn task_run_reconciles_ack_loss_after_restart_without_repeating_the_effect() {
         .approve(&awaiting.run_id, "user-1", 1_100)
         .unwrap();
     assert_eq!(uncertain.status, TaskRunStatus::OutcomeUnknown);
-    let resume_error = first_process.resume(&awaiting.run_id, 1_150).unwrap_err();
+    let resume_error = first_process
+        .resume(&awaiting.run_id, "operator-1", 1_150)
+        .unwrap_err();
     assert!(matches!(
         resume_error,
         TaskRuntimeError::RunNotResumable { .. }
@@ -295,7 +334,9 @@ fn actuator_jam_suspends_then_resumes_from_observed_partial_state() {
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut recovered = TaskRuntime::open(&database, simulator, authority).unwrap();
-    let completed = recovered.resume(&awaiting.run_id, 1_200).unwrap();
+    let completed = recovered
+        .resume(&awaiting.run_id, "operator-42", 1_200)
+        .unwrap();
     let final_snapshot = recovered.station_snapshot(1_250).unwrap();
 
     assert_eq!(completed.status, TaskRunStatus::Completed);
@@ -324,6 +365,79 @@ fn actuator_jam_suspends_then_resumes_from_observed_partial_state() {
     );
     assert_eq!(final_snapshot.desk_height_mm, 820);
     assert_eq!(final_snapshot.movement_count, 2);
+    drop(recovered);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let restarted = TaskRuntime::open(&database, simulator, policy_authority()).unwrap();
+    let persisted = restarted.inspect(&awaiting.run_id).unwrap();
+    let recovery_attempt = persisted
+        .events
+        .iter()
+        .find(|event| event.event_type == TaskEventType::RunResumeAttempted)
+        .unwrap();
+    assert_eq!(recovery_attempt.actor_id.as_deref(), Some("operator-42"));
+}
+
+#[test]
+fn actuator_recovery_actor_is_durable_before_the_interlock_is_cleared() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("station.sqlite");
+    let authority = policy_authority();
+    let mut simulator = SqliteSimulator::open(&database).unwrap();
+    simulator.set_next_fault(NextFault::ActuatorJamAtPercent(60));
+    let mut runtime = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
+    let awaiting = runtime
+        .start(
+            TaskSpec::prepare_focus_session("task-audited-recovery-clear", "user-1", 820),
+            1_000,
+        )
+        .unwrap();
+    runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
+    drop(runtime);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut crashing = TaskRuntime::open(
+        &database,
+        CrashBeforeRecoveryClear { simulator },
+        authority.clone(),
+    )
+    .unwrap();
+    let crashed = catch_unwind(AssertUnwindSafe(|| {
+        crashing
+            .resume(&awaiting.run_id, "operator-42", 1_200)
+            .unwrap();
+    }));
+    assert!(crashed.is_err());
+    drop(crashing);
+
+    let simulator = SqliteSimulator::open(&database).unwrap();
+    let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
+    let persisted = restarted.inspect(&awaiting.run_id).unwrap();
+    let recovery_attempts: Vec<_> = persisted
+        .events
+        .iter()
+        .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+        .collect();
+    assert_eq!(recovery_attempts.len(), 1);
+    assert_eq!(
+        recovery_attempts[0].actor_id.as_deref(),
+        Some("operator-42")
+    );
+
+    let completed = restarted
+        .resume(&awaiting.run_id, "operator-99", 1_300)
+        .unwrap();
+    assert_eq!(completed.status, TaskRunStatus::Completed);
+    let recovery_attempts: Vec<_> = completed
+        .events
+        .iter()
+        .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+        .collect();
+    assert_eq!(recovery_attempts.len(), 1);
+    assert_eq!(
+        recovery_attempts[0].actor_id.as_deref(),
+        Some("operator-42")
+    );
 }
 
 #[test]
@@ -342,7 +456,9 @@ fn expired_actuator_recovery_clears_the_interlock_without_authorizing_more_motio
         .unwrap();
     runtime.approve(&awaiting.run_id, "user-1", 1_100).unwrap();
 
-    let expired = runtime.resume(&awaiting.run_id, 61_001).unwrap();
+    let expired = runtime
+        .resume(&awaiting.run_id, "operator-1", 61_001)
+        .unwrap();
     let after_clear = runtime.station_snapshot(61_002).unwrap();
 
     assert_eq!(expired.status, TaskRunStatus::Suspended);
@@ -413,7 +529,9 @@ fn restart_recovers_actuator_fault_recorded_before_task_suspension_was_saved() {
     assert_eq!(suspended.command_attempts.len(), 1);
     assert_eq!(restarted.station_snapshot(1_201).unwrap().movement_count, 1);
 
-    let completed = restarted.resume(&awaiting.run_id, 1_300).unwrap();
+    let completed = restarted
+        .resume(&awaiting.run_id, "operator-1", 1_300)
+        .unwrap();
     assert_eq!(completed.status, TaskRunStatus::Completed);
     assert_eq!(completed.command_attempts.len(), 1);
     assert_eq!(restarted.station_snapshot(1_301).unwrap().movement_count, 2);
@@ -454,13 +572,17 @@ fn concurrent_actuator_recovery_dispatches_only_one_replacement_command() {
             block_next_snapshot: true,
         };
         let mut runtime = TaskRuntime::open(&blocked_database, device, policy_authority()).unwrap();
-        runtime.resume(&blocked_run_id, 1_200).unwrap()
+        runtime
+            .resume(&blocked_run_id, "operator-1", 1_200)
+            .unwrap()
     });
     entered.wait();
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut concurrent = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
-    let completed = concurrent.resume(&awaiting.run_id, 1_250).unwrap();
+    let completed = concurrent
+        .resume(&awaiting.run_id, "operator-1", 1_250)
+        .unwrap();
     assert_eq!(completed.status, TaskRunStatus::Completed);
 
     release.wait();
@@ -505,7 +627,11 @@ fn three_recovery_jams_retain_the_initial_attempt_plus_the_full_recovery_budget(
         simulator.set_next_fault(NextFault::ActuatorJamAtPercent(60));
         runtime = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
         let suspended = runtime
-            .resume(&awaiting.run_id, 1_100 + recovery_attempt * 100)
+            .resume(
+                &awaiting.run_id,
+                "operator-1",
+                1_100 + recovery_attempt * 100,
+            )
             .unwrap();
 
         assert_eq!(suspended.status, TaskRunStatus::Suspended);
@@ -519,7 +645,9 @@ fn three_recovery_jams_retain_the_initial_attempt_plus_the_full_recovery_budget(
         );
     }
 
-    let exhausted = runtime.resume(&awaiting.run_id, 1_500).unwrap_err();
+    let exhausted = runtime
+        .resume(&awaiting.run_id, "operator-1", 1_500)
+        .unwrap_err();
     assert!(matches!(
         exhausted,
         TaskRuntimeError::RecoveryBudgetExhausted {
@@ -558,7 +686,9 @@ fn restart_dispatches_a_durably_reserved_actuator_recovery() {
     let mut crashing_process =
         TaskRuntime::open(&database, crashing_device, authority.clone()).unwrap();
     let crashed = catch_unwind(AssertUnwindSafe(|| {
-        crashing_process.resume(&awaiting.run_id, 1_200).unwrap();
+        crashing_process
+            .resume(&awaiting.run_id, "operator-1", 1_200)
+            .unwrap();
     }));
     assert!(crashed.is_err());
     drop(crashing_process);
@@ -629,7 +759,9 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut recovered_process = TaskRuntime::open(&database, simulator, authority).unwrap();
-    let completed = recovered_process.resume(&awaiting.run_id, 1_200).unwrap();
+    let completed = recovered_process
+        .resume(&awaiting.run_id, "operator-1", 1_200)
+        .unwrap();
 
     assert_eq!(completed.status, TaskRunStatus::Completed);
     assert_eq!(completed.suspension_reason, None);
@@ -637,7 +769,9 @@ fn task_run_resumes_after_device_unavailable_before_station_journal() {
         completed.events.last().unwrap().event_type.as_str(),
         "run_resumed"
     );
-    let replayed = recovered_process.resume(&awaiting.run_id, 1_225).unwrap();
+    let replayed = recovered_process
+        .resume(&awaiting.run_id, "operator-1", 1_225)
+        .unwrap();
     assert_eq!(replayed, completed);
     assert_eq!(
         recovered_process
@@ -676,7 +810,9 @@ fn resume_attempts_are_persisted_and_bounded_across_restarts() {
     let mut crashing_process =
         TaskRuntime::open(&database, CrashOnSnapshot, authority.clone()).unwrap();
     let crashed = catch_unwind(AssertUnwindSafe(|| {
-        crashing_process.resume(&awaiting.run_id, 1_200).unwrap();
+        crashing_process
+            .resume(&awaiting.run_id, "operator-1", 1_200)
+            .unwrap();
     }));
     assert!(crashed.is_err());
     drop(crashing_process);
@@ -700,7 +836,7 @@ fn resume_attempts_are_persisted_and_bounded_across_restarts() {
         let mut runtime = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
 
         let still_suspended = runtime
-            .resume(&awaiting.run_id, 1_100 + attempt * 100)
+            .resume(&awaiting.run_id, "operator-1", 1_100 + attempt * 100)
             .unwrap();
 
         assert_eq!(still_suspended.status, TaskRunStatus::Suspended);
@@ -716,7 +852,9 @@ fn resume_attempts_are_persisted_and_bounded_across_restarts() {
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut exhausted = TaskRuntime::open(&database, simulator, authority).unwrap();
-    let error = exhausted.resume(&awaiting.run_id, 1_500).unwrap_err();
+    let error = exhausted
+        .resume(&awaiting.run_id, "operator-1", 1_500)
+        .unwrap_err();
 
     assert!(matches!(
         error,
@@ -767,14 +905,18 @@ fn concurrent_resume_completion_preserves_later_attempt_reservations() {
             block_next_snapshot: true,
         };
         let mut runtime = TaskRuntime::open(&blocked_database, device, policy_authority()).unwrap();
-        runtime.resume(&blocked_run_id, 1_200).unwrap()
+        runtime
+            .resume(&blocked_run_id, "operator-1", 1_200)
+            .unwrap()
     });
     entered.wait();
 
     let mut simulator = SqliteSimulator::open(&database).unwrap();
     simulator.set_next_fault(NextFault::DeviceUnavailableBeforeDispatch);
     let mut concurrent = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
-    let still_suspended = concurrent.resume(&awaiting.run_id, 1_250).unwrap();
+    let still_suspended = concurrent
+        .resume(&awaiting.run_id, "operator-2", 1_250)
+        .unwrap();
     assert_eq!(still_suspended.status, TaskRunStatus::Suspended);
     drop(concurrent);
 
@@ -836,7 +978,7 @@ fn terminal_station_replay_after_task_save_failure_does_not_consume_an_attempt()
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut failed_save = TaskRuntime::open(&database, simulator, authority.clone()).unwrap();
     assert!(matches!(
-        failed_save.resume(&awaiting.run_id, 1_200),
+        failed_save.resume(&awaiting.run_id, "operator-1", 1_200),
         Err(TaskRuntimeError::Storage(_))
     ));
     drop(failed_save);
@@ -847,7 +989,9 @@ fn terminal_station_replay_after_task_save_failure_does_not_consume_an_attempt()
 
     let simulator = SqliteSimulator::open(&database).unwrap();
     let mut restarted = TaskRuntime::open(&database, simulator, authority).unwrap();
-    let completed = restarted.resume(&awaiting.run_id, 1_300).unwrap();
+    let completed = restarted
+        .resume(&awaiting.run_id, "operator-1", 1_300)
+        .unwrap();
 
     assert_eq!(completed.status, TaskRunStatus::Completed);
     assert_eq!(
@@ -1008,7 +1152,9 @@ fn reconcile_suspends_a_persisted_intent_after_station_state_changes() {
     let final_state = restarted.station_snapshot(1_201).unwrap();
     assert_eq!(final_state.desk_height_mm, 740);
     assert_eq!(final_state.movement_count, 1);
-    let resume_error = restarted.resume(&awaiting.run_id, 1_202).unwrap_err();
+    let resume_error = restarted
+        .resume(&awaiting.run_id, "operator-1", 1_202)
+        .unwrap_err();
     assert!(matches!(
         resume_error,
         TaskRuntimeError::RunNotResumable { .. }
@@ -1086,7 +1232,9 @@ fn expired_pre_dispatch_intent_suspends_without_moving_after_restart() {
         restarted.station_snapshot(70_001).unwrap().movement_count,
         0
     );
-    let resume_error = restarted.resume(&awaiting.run_id, 70_002).unwrap_err();
+    let resume_error = restarted
+        .resume(&awaiting.run_id, "operator-1", 70_002)
+        .unwrap_err();
     assert!(matches!(
         resume_error,
         TaskRuntimeError::RunNotResumable { .. }

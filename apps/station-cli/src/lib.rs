@@ -180,6 +180,8 @@ pub enum RpcRequest {
     ResumeTask {
         #[serde(rename = "runId")]
         run_id: String,
+        #[serde(rename = "resumedBy")]
+        resumed_by: String,
         #[serde(rename = "nowMs")]
         now_ms: u64,
     },
@@ -299,9 +301,11 @@ pub fn invoke_rpc_with_motion_step_delay(
         RpcRequest::ReconcileTask { run_id, now_ms } => {
             serde_json::to_value(runtime.reconcile(&run_id, now_ms)?)?
         }
-        RpcRequest::ResumeTask { run_id, now_ms } => {
-            serde_json::to_value(runtime.resume(&run_id, now_ms)?)?
-        }
+        RpcRequest::ResumeTask {
+            run_id,
+            resumed_by,
+            now_ms,
+        } => serde_json::to_value(runtime.resume(&run_id, &resumed_by, now_ms)?)?,
         RpcRequest::StationSnapshot { observed_at_ms } => {
             serde_json::to_value(runtime.station_snapshot(observed_at_ms)?)?
         }

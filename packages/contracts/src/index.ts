@@ -540,6 +540,7 @@ export const taskEventSchema = z
       "run_cancelled",
     ]),
     atMs: z.number().int().nonnegative(),
+    actorId: actorIdSchema.optional(),
   })
   .strict();
 

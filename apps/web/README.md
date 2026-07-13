@@ -18,7 +18,9 @@ to SQLite or device RPC method names.
 
 The normal operator console adds a confirmation checkpoint before clearing a
 jam and authorizing the remaining simulated motion. The completed run keeps the
-failed command, its journal events and its last physical progress sample.
+failed command, its journal events and its last physical progress sample. Its
+timeline also shows the durable recovery actor supplied by the Hono process or
+Tauri host rather than by the browser action request.
 
 shadcn/ui owns the deterministic controls. The provider selector enables only
 providers configured by the control plane, and AI Elements `Task` renders the

@@ -12,6 +12,7 @@ use thiserror::Error;
 
 const POLICY_KEY_BYTES: usize = 32;
 const MOTION_STEP_DELAY: Duration = Duration::from_millis(100);
+const LOCAL_OPERATOR_ID: &str = "local-desktop-operator";
 
 #[derive(Clone)]
 pub(crate) struct StationHost {
@@ -73,7 +74,10 @@ impl StationHost {
         })
     }
 
-    pub(crate) fn invoke(&self, request: RpcRequest) -> Result<Value, StationCommandError> {
+    pub(crate) fn invoke(&self, mut request: RpcRequest) -> Result<Value, StationCommandError> {
+        if let RpcRequest::ResumeTask { resumed_by, .. } = &mut request {
+            *resumed_by = LOCAL_OPERATOR_ID.into();
+        }
         let authority = PolicyAuthority::new(&self.policy_key).map_err(DemoError::from)?;
         station_cli::invoke_rpc_with_motion_step_delay(
             &self.database_path,
@@ -171,6 +175,65 @@ mod tests {
         assert_eq!(completed["status"], "completed");
         assert_eq!(snapshot["deskHeightMm"], 780);
         assert_eq!(snapshot["movementCount"], 1);
+    }
+
+    #[test]
+    fn desktop_host_owns_the_persisted_recovery_actor() {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            StationHost::open_with_motion_step_delay(directory.path(), Duration::ZERO).unwrap();
+        let started = host
+            .invoke(request(json!({
+                "method": "task.start",
+                "params": {
+                    "task": {
+                        "schemaVersion": 1,
+                        "taskId": "task-desktop-recovery-actor",
+                        "goal": "prepare_focus_session",
+                        "requestedBy": "user-1",
+                        "constraints": {},
+                        "assumptions": [],
+                        "steps": [{
+                            "stepId": "desk-1",
+                            "action": {
+                                "type": "desk.move_to_height",
+                                "input": { "heightMm": 780 }
+                            }
+                        }]
+                    },
+                    "nowMs": 1_000
+                }
+            })))
+            .unwrap();
+        let run_id = started["runId"].as_str().unwrap();
+        host.invoke(request(json!({
+            "method": "demo.task.approve_with_actuator_jam",
+            "params": {
+                "runId": run_id,
+                "approvedBy": "user-1",
+                "nowMs": 1_100
+            }
+        })))
+        .unwrap();
+
+        let completed = host
+            .invoke(request(json!({
+                "method": "task.resume",
+                "params": {
+                    "runId": run_id,
+                    "resumedBy": "spoofed-webview-actor",
+                    "nowMs": 1_200
+                }
+            })))
+            .unwrap();
+        let recovery_attempt = completed["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["eventType"] == "run_resume_attempted")
+            .unwrap();
+
+        assert_eq!(recovery_attempt["actorId"], "local-desktop-operator");
     }
 
     fn request(value: Value) -> RpcRequest {

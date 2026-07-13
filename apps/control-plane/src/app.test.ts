@@ -885,14 +885,23 @@ describe("control-plane API", () => {
 
   it("exposes resume separately from reconciliation", async () => {
     const station = fakeStation();
-    const app = createApp(station, { now: () => 1_200 });
+    const app = createApp(station, {
+      now: () => 1_200,
+      operatorId: "operator-42",
+    });
 
     const response = await app.request("/api/task-runs/run-task-api-1/resume", {
       method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resumedBy: "spoofed-browser-actor" }),
     });
 
     expect(response.status).toBe(200);
-    expect(station.resumeTask).toHaveBeenCalledWith("run-task-api-1", 1_200);
+    expect(station.resumeTask).toHaveBeenCalledWith(
+      "run-task-api-1",
+      "operator-42",
+      1_200,
+    );
     expect(station.reconcileTask).not.toHaveBeenCalled();
   });
 

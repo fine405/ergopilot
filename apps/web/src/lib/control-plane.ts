@@ -353,7 +353,14 @@ export class TauriControlPlane implements ControlPlane {
 
   resumeTask(runId: string): Promise<TaskRunView> {
     return this.invokeStation(
-      { method: "task.resume", params: { runId, nowMs: this.now() } },
+      {
+        method: "task.resume",
+        params: {
+          runId,
+          resumedBy: "untrusted-webview",
+          nowMs: this.now(),
+        },
+      },
       taskRunViewSchema,
     );
   }

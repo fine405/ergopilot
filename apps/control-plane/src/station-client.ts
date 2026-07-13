@@ -43,7 +43,11 @@ export interface StationClient {
     approvedBy: string,
     nowMs: number,
   ): Promise<TaskRunView>;
-  resumeTask(runId: string, nowMs: number): Promise<TaskRunView>;
+  resumeTask(
+    runId: string,
+    resumedBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView>;
   reconcileTask(runId: string, nowMs: number): Promise<TaskRunView>;
   stationSnapshot(observedAtMs: number): Promise<WorkstationSnapshot>;
 }
@@ -75,7 +79,10 @@ type RpcRequest =
       method: "demo.task.approve_with_device_unavailable_before_dispatch";
       params: { runId: string; approvedBy: string; nowMs: number };
     }
-  | { method: "task.resume"; params: { runId: string; nowMs: number } }
+  | {
+      method: "task.resume";
+      params: { runId: string; resumedBy: string; nowMs: number };
+    }
   | { method: "task.reconcile"; params: { runId: string; nowMs: number } }
   | { method: "station.snapshot"; params: { observedAtMs: number } };
 
@@ -251,9 +258,13 @@ export class ProcessStationClient implements StationClient {
     );
   }
 
-  resumeTask(runId: string, nowMs: number): Promise<TaskRunView> {
+  resumeTask(
+    runId: string,
+    resumedBy: string,
+    nowMs: number,
+  ): Promise<TaskRunView> {
     return this.#invoke(
-      { method: "task.resume", params: { runId, nowMs } },
+      { method: "task.resume", params: { runId, resumedBy, nowMs } },
       taskRunViewSchema,
     );
   }

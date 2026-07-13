@@ -45,6 +45,10 @@ desktop station are runnable end to end. The current slice implements:
   journals `actuator_fault` across process restarts, suspends the run, and
   resumes from a fresh station snapshot using a new command and idempotency key
   after explicit operator clearance; the failed attempt remains inspectable;
+- a server-owned recovery actor that is journaled before actuator clearance,
+  survives station restarts and appears in the execution timeline; the Hono
+  process reads it from `ERGOPILOT_OPERATOR_ID`, while Tauri overwrites any
+  WebView-supplied actor with its local host identity;
 - persisted suspension reasons that distinguish recoverable device
   unavailability from stale station state and expired authorization;
 - a bounded JSON process protocol between the TypeScript control plane and the
@@ -82,8 +86,10 @@ runtime in process through Tauri and stores its SQLite journal and generated
 policy key in the OS application-data directory. Natural-language planning is
 still delegated to the loopback Hono service in this slice. Authenticated
 remote coordination, a Durable Object session and a durable cloud workflow
-remain future work. Approval and recovery actor strings are local demo
-assertions until that authentication boundary is implemented.
+remain future work. Approval identity is still a client-provided demo
+assertion. Recovery identity is server/host-owned and durable, but it remains a
+local configured assertion rather than an authenticated user session until the
+remote authentication boundary is implemented.
 
 ## Run locally
 
@@ -98,6 +104,9 @@ Open <http://localhost:3000>. The control plane listens on
 <http://localhost:8787>. Local development has a non-production policy key;
 copy `.env.example` to `.env` when you want to override paths, origins or
 credentials. Relative station paths are resolved from the repository root.
+`ERGOPILOT_OPERATOR_ID` names the local operator recorded for recovery actions;
+it defaults to `local-operator`. This is an audit identity for the local demo,
+not a production login.
 Planner attempts are atomically persisted to
 `target/ergopilot-planner-attempts.json` by default, so the latest 100 traces
 survive a control-plane restart. Override the path with
@@ -178,6 +187,8 @@ height and finish the same run with a fresh command identity; the failed
 command is never replayed. The operator console requires a second confirmation
 and retains the original `execution_failed` event and 60% progress after the
 replacement command succeeds.
+The recovery attempt is written before the simulator interlock is cleared, and
+the timeline shows the server- or host-owned operator ID even after restart.
 
 To exercise a definite pre-effect failure, choose **Approve + device offline
 (demo)**. The station command has already been journaled, so the run becomes

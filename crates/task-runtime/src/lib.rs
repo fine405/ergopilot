@@ -217,6 +217,8 @@ pub struct TaskEvent {
     pub sequence: u64,
     pub event_type: TaskEventType,
     pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -305,9 +307,19 @@ struct StoredRun {
     expected_state_version: Option<u64>,
     #[serde(default)]
     current_step_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actuator_recovery_authorization: Option<ActuatorRecoveryAuthorization>,
     view: TaskRunView,
     command: Option<DeviceCommand>,
     grant: Option<PolicyGrant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActuatorRecoveryAuthorization {
+    failed_command_id: String,
+    resumed_by: String,
+    authorized_at_ms: u64,
 }
 
 enum ContinuationUpdate {
@@ -405,11 +417,13 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                     sequence: 1,
                     event_type: TaskEventType::RunStarted,
                     at_ms: now_ms,
+                    actor_id: None,
                 },
                 TaskEvent {
                     sequence: 2,
                     event_type: second_event,
                     at_ms: now_ms,
+                    actor_id: None,
                 },
             ],
             policy_decision,
@@ -418,6 +432,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             &StoredRun {
                 expected_state_version,
                 current_step_index: 0,
+                actuator_recovery_authorization: None,
                 view: view.clone(),
                 command: None,
                 grant: None,
@@ -724,7 +739,12 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         self.continue_run(stored, now_ms, TaskEventType::RunReconciled)
     }
 
-    pub fn resume(&mut self, run_id: &str, now_ms: u64) -> Result<TaskRunView, TaskRuntimeError> {
+    pub fn resume(
+        &mut self,
+        run_id: &str,
+        resumed_by: &str,
+        now_ms: u64,
+    ) -> Result<TaskRunView, TaskRuntimeError> {
         let current = self.load_run(run_id)?;
         if matches!(
             current.view.status,
@@ -744,7 +764,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             });
         }
         if suspension_reason == Some(SuspensionReason::ActuatorFault) {
-            let (stored, reserved) = self.reserve_actuator_recovery(&current, now_ms)?;
+            let (stored, reserved) =
+                self.reserve_actuator_recovery(&current, resumed_by, now_ms)?;
             if !reserved {
                 return Ok(stored.view);
             }
@@ -777,7 +798,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 return Ok(view);
             }
         }
-        let mut stored = self.reserve_resume_attempt(run_id, now_ms)?;
+        let mut stored = self.reserve_resume_attempt(run_id, resumed_by, now_ms)?;
         if matches!(
             stored.view.status,
             TaskRunStatus::Completed | TaskRunStatus::Failed | TaskRunStatus::Denied
@@ -791,6 +812,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     fn reserve_resume_attempt(
         &mut self,
         run_id: &str,
+        resumed_by: &str,
         now_ms: u64,
     ) -> Result<StoredRun, TaskRuntimeError> {
         let transaction = self
@@ -833,7 +855,12 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
                 max_attempts: MAX_RECOVERY_ATTEMPTS,
             });
         }
-        append_event(&mut stored.view, TaskEventType::RunResumeAttempted, now_ms);
+        append_actor_event(
+            &mut stored.view,
+            TaskEventType::RunResumeAttempted,
+            resumed_by,
+            now_ms,
+        );
         let stored_json = serde_json::to_string(&stored)?;
         transaction.execute(
             "UPDATE task_runs
@@ -848,17 +875,16 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
     fn reserve_actuator_recovery(
         &mut self,
         current: &StoredRun,
+        resumed_by: &str,
         now_ms: u64,
     ) -> Result<(StoredRun, bool), TaskRuntimeError> {
         let run_id = current.view.run_id.clone();
-        let failed_command_id = current
-            .command
-            .as_ref()
-            .map(|command| command.command_id.clone())
-            .ok_or_else(|| TaskRuntimeError::PendingCommandNotFound {
-                run_id: run_id.clone(),
-            })?;
-        let expires_at_ms = current
+        let (authorized, authorization) =
+            self.authorize_actuator_recovery(&run_id, resumed_by, now_ms)?;
+        let Some(authorization) = authorization else {
+            return Ok((authorized, false));
+        };
+        let expires_at_ms = authorized
             .view
             .approval
             .as_ref()
@@ -866,7 +892,8 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             .ok_or_else(|| TaskRuntimeError::CorruptRun {
                 run_id: run_id.clone(),
             })?;
-        self.station.prepare_command_recovery(&failed_command_id)?;
+        self.station
+            .prepare_command_recovery(&authorization.failed_command_id)?;
         let observed_state_version = if expires_at_ms > now_ms {
             Some(self.station.snapshot(now_ms)?.state_version)
         } else {
@@ -893,21 +920,12 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
             transaction.commit()?;
             return Ok((stored, false));
         }
-        let attempt_count = stored
-            .view
-            .events
-            .iter()
-            .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
-            .count();
-        if attempt_count >= MAX_RECOVERY_ATTEMPTS {
-            return Err(TaskRuntimeError::RecoveryBudgetExhausted {
-                run_id,
-                max_attempts: MAX_RECOVERY_ATTEMPTS,
-            });
+        if stored.actuator_recovery_authorization.as_ref() != Some(&authorization) {
+            return Err(TaskRuntimeError::CorruptRun { run_id });
         }
-        append_event(&mut stored.view, TaskEventType::RunResumeAttempted, now_ms);
         if expires_at_ms <= now_ms {
             stored.view.suspension_reason = Some(SuspensionReason::Expired);
+            stored.actuator_recovery_authorization = None;
             append_event(&mut stored.view, TaskEventType::RunSuspended, now_ms);
             let stored_json = serde_json::to_string(&stored)?;
             transaction.execute(
@@ -921,7 +939,12 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         }
 
         stored.expected_state_version = observed_state_version;
-        let recovery_attempt = attempt_count + 1;
+        let recovery_attempt = stored
+            .view
+            .events
+            .iter()
+            .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+            .count();
         let mut command = command_for(&stored, &run_id, expires_at_ms)?;
         command.command_id = format!("{}-recovery-{recovery_attempt}", command.command_id);
         command.idempotency_key =
@@ -931,6 +954,7 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         let grant = issue_grant(&self.policy_authority, &command, now_ms)?;
         stored.command = Some(command);
         stored.grant = Some(grant);
+        stored.actuator_recovery_authorization = None;
         stored.view.status = TaskRunStatus::Executing;
         stored.view.suspension_reason = None;
         record_current_command_attempt(&mut stored)?;
@@ -947,6 +971,84 @@ impl<D: DeviceAdapter> TaskRuntime<D> {
         )?;
         transaction.commit()?;
         Ok((stored, true))
+    }
+
+    fn authorize_actuator_recovery(
+        &mut self,
+        run_id: &str,
+        resumed_by: &str,
+        now_ms: u64,
+    ) -> Result<(StoredRun, Option<ActuatorRecoveryAuthorization>), TaskRuntimeError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_json = transaction
+            .query_row(
+                "SELECT stored_json FROM task_runs WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| TaskRuntimeError::RunNotFound {
+                run_id: run_id.into(),
+            })?;
+        let mut stored = deserialize_stored_run(run_id, &stored_json)?;
+        if stored.view.status != TaskRunStatus::Suspended
+            || stored.view.suspension_reason != Some(SuspensionReason::ActuatorFault)
+        {
+            transaction.commit()?;
+            return Ok((stored, None));
+        }
+        let failed_command_id = stored
+            .command
+            .as_ref()
+            .map(|command| command.command_id.clone())
+            .ok_or_else(|| TaskRuntimeError::PendingCommandNotFound {
+                run_id: run_id.into(),
+            })?;
+        if let Some(authorization) = &stored.actuator_recovery_authorization {
+            if authorization.failed_command_id != failed_command_id {
+                return Err(TaskRuntimeError::CorruptRun {
+                    run_id: run_id.into(),
+                });
+            }
+            let authorization = authorization.clone();
+            transaction.commit()?;
+            return Ok((stored, Some(authorization)));
+        }
+        let attempt_count = stored
+            .view
+            .events
+            .iter()
+            .filter(|event| event.event_type == TaskEventType::RunResumeAttempted)
+            .count();
+        if attempt_count >= MAX_RECOVERY_ATTEMPTS {
+            return Err(TaskRuntimeError::RecoveryBudgetExhausted {
+                run_id: run_id.into(),
+                max_attempts: MAX_RECOVERY_ATTEMPTS,
+            });
+        }
+        let authorization = ActuatorRecoveryAuthorization {
+            failed_command_id,
+            resumed_by: resumed_by.into(),
+            authorized_at_ms: now_ms,
+        };
+        append_actor_event(
+            &mut stored.view,
+            TaskEventType::RunResumeAttempted,
+            resumed_by,
+            now_ms,
+        );
+        stored.actuator_recovery_authorization = Some(authorization.clone());
+        let stored_json = serde_json::to_string(&stored)?;
+        transaction.execute(
+            "UPDATE task_runs
+             SET stored_json = ?1, updated_at_ms = ?2
+             WHERE run_id = ?3",
+            params![stored_json, now_ms, run_id],
+        )?;
+        transaction.commit()?;
+        Ok((stored, Some(authorization)))
     }
 
     fn continue_run(
@@ -1476,6 +1578,24 @@ fn task_outcome(
 }
 
 fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
+    append_event_with_actor(view, event_type, None, at_ms);
+}
+
+fn append_actor_event(
+    view: &mut TaskRunView,
+    event_type: TaskEventType,
+    actor_id: &str,
+    at_ms: u64,
+) {
+    append_event_with_actor(view, event_type, Some(actor_id), at_ms);
+}
+
+fn append_event_with_actor(
+    view: &mut TaskRunView,
+    event_type: TaskEventType,
+    actor_id: Option<&str>,
+    at_ms: u64,
+) {
     let sequence = view
         .events
         .last()
@@ -1485,6 +1605,7 @@ fn append_event(view: &mut TaskRunView, event_type: TaskEventType, at_ms: u64) {
         sequence,
         event_type,
         at_ms,
+        actor_id: actor_id.map(str::to_owned),
     });
 }
 

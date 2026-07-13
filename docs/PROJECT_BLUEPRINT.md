@@ -335,7 +335,7 @@ interface TaskRuntime {
   approve(runId: string, approvedBy: string, nowMs: number): Promise<TaskRunView>
   cancel(runId: string, cancelledBy: string, nowMs: number): Promise<TaskRunView>
   reconcile(runId: string, nowMs: number): Promise<TaskRunView>
-  resume(runId: string, nowMs: number): Promise<TaskRunView>
+  resume(runId: string, resumedBy: string, nowMs: number): Promise<TaskRunView>
   inspect(runId: string): Promise<TaskRunView>
   stationSnapshot(observedAtMs: number): Promise<WorkstationSnapshot>
 }
@@ -571,9 +571,11 @@ Exit criterion: the web console can run the same hard-coded `TaskSpec` against
 the local simulator.
 
 Current milestone: this exit criterion is met through a local Hono-to-Rust JSON
-process adapter. The API is bound to loopback while approval identity remains a
-local demo assertion. Authentication, the Durable Object, outbound station
-WebSocket and hosted deployment remain the next remote-coordination slice.
+process adapter. The API is bound to loopback. Recovery identity is owned by
+the Hono process or Tauri host, persisted before device clearance and exposed
+as timeline evidence; approval identity remains a local client assertion.
+Authenticated user sessions, the Durable Object, outbound station WebSocket
+and hosted deployment remain the next remote-coordination slice.
 
 ### Week 4 — durable workflow and Agent planner
 
@@ -623,9 +625,11 @@ original command terminal and failed with a restart-safe structured reason,
 then clears and resumes from an observed snapshot under a new command identity.
 The read model retains the failed command, events and 60 percent progress after
 successful recovery. Expired authorization permits clear-only stabilization,
-never replacement motion. Cloud trace storage, authenticated recovery-actor
-binding, seeded fault selection, timeout-based jam reconciliation, repeated
-provider comparison and tool-call/fault-coverage scoring remain future slices.
+never replacement motion. A server/host-owned recovery actor is persisted
+before the interlock is cleared and survives restart. Cloud trace storage,
+authenticated user-session binding, seeded fault selection, timeout-based jam
+reconciliation, repeated provider comparison and tool-call/fault-coverage
+scoring remain future slices.
 
 ### Week 6 — portfolio polish and one integration
 
@@ -667,6 +671,8 @@ These are pre-declared targets, not résumé claims until measured.
 - An expired approval cannot authorize a command.
 - An expired actuator recovery can stabilize the device without dispatching
   replacement motion.
+- Every actuator-clear attempt durably identifies its local operator before
+  the simulator interlock changes.
 
 ### 14.2 Fault recovery
 

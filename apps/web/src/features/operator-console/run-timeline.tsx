@@ -153,6 +153,12 @@ export function RunTimeline({ taskEvents, commandEvents }: RunTimelineProps) {
                     {" · "}
                     {item.event.eventType}
                   </p>
+                  {item.source === "task" && item.event.actorId && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Operator ·{" "}
+                      <span className="font-mono">{item.event.actorId}</span>
+                    </p>
+                  )}
                 </div>
               </li>
             );

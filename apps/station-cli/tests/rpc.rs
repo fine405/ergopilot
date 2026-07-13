@@ -39,6 +39,7 @@ fn resume_request_has_a_stable_cross_process_json_contract() {
         "method": "task.resume",
         "params": {
             "runId": "run-task-rpc-1",
+            "resumedBy": "operator-42",
             "nowMs": 1_200
         }
     }))
@@ -50,6 +51,7 @@ fn resume_request_has_a_stable_cross_process_json_contract() {
             "method": "task.resume",
             "params": {
                 "runId": "run-task-rpc-1",
+                "resumedBy": "operator-42",
                 "nowMs": 1_200
             }
         })
@@ -456,6 +458,7 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
         &authority,
         RpcRequest::ResumeTask {
             run_id: run_id.into(),
+            resumed_by: "operator-42".into(),
             now_ms: 1_200,
         },
     );
@@ -468,9 +471,19 @@ fn demo_device_unavailable_before_dispatch_resumes_the_same_run() {
         resumed["result"]["events"]
             .as_array()
             .unwrap()
-            .last()
+            .iter()
+            .find(|event| event["eventType"] == "run_resume_attempted")
             .unwrap()["eventType"],
-        "run_resumed"
+        "run_resume_attempted"
+    );
+    assert_eq!(
+        resumed["result"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["eventType"] == "run_resume_attempted")
+            .unwrap()["actorId"],
+        "operator-42"
     );
 
     let final_snapshot = invoke(
@@ -535,6 +548,7 @@ fn demo_actuator_jam_rpc_resumes_the_same_run_without_replaying_the_failed_comma
         &authority,
         RpcRequest::ResumeTask {
             run_id: run_id.into(),
+            resumed_by: "operator-42".into(),
             now_ms: 1_200,
         },
     );

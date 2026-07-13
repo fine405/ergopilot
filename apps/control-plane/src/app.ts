@@ -45,6 +45,7 @@ import {
 export interface AppOptions {
   now?: () => number;
   allowedOrigin?: string;
+  operatorId?: string;
   plannerAttemptStore?: PlannerAttemptStore;
   plannerEvaluationStore?: PlannerEvaluationStore;
   planners?: TaskPlannerRegistry;
@@ -91,6 +92,10 @@ function stationRpcStatus(
 
 export function createApp(station: StationClient, options: AppOptions = {}) {
   const now = options.now ?? Date.now;
+  const operatorId = options.operatorId?.trim() || "local-operator";
+  if (operatorId.length > 128) {
+    throw new Error("operatorId must not exceed 128 characters");
+  }
   const allowedOrigins = [
     options.allowedOrigin ?? "http://localhost:3000",
     "tauri://localhost",
@@ -426,7 +431,9 @@ export function createApp(station: StationClient, options: AppOptions = {}) {
       ),
     )
     .post("/api/task-runs/:runId/resume", async (context) =>
-      context.json(await station.resumeTask(context.req.param("runId"), now())),
+      context.json(
+        await station.resumeTask(context.req.param("runId"), operatorId, now()),
+      ),
     )
     .get("/api/station/snapshot", async (context) =>
       context.json(await station.stationSnapshot(now())),

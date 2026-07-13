@@ -488,7 +488,11 @@ describe("ProcessStationClient", () => {
     await expect(
       client.reconcileTask(awaiting.runId, 1_175),
     ).rejects.toMatchObject({ code: "invalid_transition" });
-    const resumed = await client.resumeTask(awaiting.runId, 1_200);
+    const resumed = await client.resumeTask(
+      awaiting.runId,
+      "operator-42",
+      1_200,
+    );
     const finalSnapshot = await client.stationSnapshot(1_250);
 
     expect(suspended.status).toBe("suspended");
@@ -538,7 +542,11 @@ describe("ProcessStationClient", () => {
       1_100,
     );
     const partial = await client.stationSnapshot(1_150);
-    const completed = await client.resumeTask(awaiting.runId, 1_200);
+    const completed = await client.resumeTask(
+      awaiting.runId,
+      "operator-42",
+      1_200,
+    );
     const finalSnapshot = await client.stationSnapshot(1_250);
 
     expect(suspended.status).toBe("suspended");

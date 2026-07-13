@@ -71,7 +71,12 @@ const resumeAttemptedRun: TaskRunView = {
   ...suspendedRun,
   events: [
     ...suspendedRun.events,
-    { sequence: 5, eventType: "run_resume_attempted", atMs: 2_100 },
+    {
+      sequence: 5,
+      eventType: "run_resume_attempted",
+      atMs: 2_100,
+      actorId: "operator-42",
+    },
   ],
 };
 
@@ -516,6 +521,7 @@ describe("RunOverview", () => {
     expect(onReconcile).not.toHaveBeenCalled();
     expect(screen.getByText("Run suspended safely")).toBeTruthy();
     expect(screen.getByText("Resume attempt recorded")).toBeTruthy();
+    expect(screen.getByText("operator-42")).toBeTruthy();
   });
 
   it("requires an explicit clear before resuming a partial actuator effect", () => {

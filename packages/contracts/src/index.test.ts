@@ -614,8 +614,12 @@ describe("TaskRunView contract", () => {
         sequence: 5,
         eventType: "run_resume_attempted",
         atMs: 1_150,
-      }).eventType,
-    ).toBe("run_resume_attempted");
+        actorId: "operator-42",
+      }),
+    ).toMatchObject({
+      eventType: "run_resume_attempted",
+      actorId: "operator-42",
+    });
     expect(
       taskEventSchema.parse({
         sequence: 6,
